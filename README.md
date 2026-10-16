@@ -12,6 +12,7 @@ The current foundation covers:
 - Epic Account ID and Product User ID wrappers
 - Auth login/logout, account enumeration, and auth-token copying
 - Connect login/logout, Product User enumeration, and explicit user creation
+- Stats ingest and query, with copied access to cached stat results
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -57,12 +58,19 @@ the Account Portal consent flow and Developer Authentication Tool login, then
 continues through Connect and optional Product User creation. On macOS, Auth UI
 requires a GUI `.app` context; see [`tools/README.md`](tools/README.md).
 
+The [`stats.bmx`](sdk.mod/examples/stats.bmx) example continues from Developer
+Auth through Connect, ingests a configured stat, queries it, and reads the
+result from the local EOS cache. Add `STAT_NAME` and `STAT_INGEST_AMOUNT` to
+your ignored local configuration; the named stat must already exist in the EOS
+Developer Portal. A successful ingest callback means the request reached EOS,
+but backend processing and achievement updates can take additional time.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
 
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
-2. Achievements, Stats, and Leaderboards
+2. Achievements, Stats, and Leaderboards (Stats core implemented)
 3. Friends, Presence, and User Info
 4. Lobbies and Sessions
 5. P2P

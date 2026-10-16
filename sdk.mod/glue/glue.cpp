@@ -6,6 +6,7 @@
 #include "../SDK/Include/eos_auth.h"
 #include "../SDK/Include/eos_connect.h"
 #include "../SDK/Include/eos_logging.h"
+#include "../SDK/Include/eos_stats.h"
 #include "../SDK/Include/eos_version.h"
 
 #include <algorithm>
@@ -28,6 +29,10 @@ void eos_sdk_TEOSConnectCreateUserRequest__Complete(BBObject *, EOS_EResult, EOS
 void eos_sdk_TEOSConnectCreateUserRequest__Cancel(BBObject *);
 void eos_sdk_TEOSConnectLogoutRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
 void eos_sdk_TEOSConnectLogoutRequest__Cancel(BBObject *);
+void eos_sdk_TEOSStatsIngestRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSStatsIngestRequest__Cancel(BBObject *);
+void eos_sdk_TEOSStatsQueryRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSStatsQueryRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -48,7 +53,9 @@ enum class RequestKind {
 	AuthLogout,
 	ConnectLogin,
 	ConnectCreateUser,
-	ConnectLogout
+	ConnectLogout,
+	StatsIngest,
+	StatsQuery
 };
 
 struct RequestContext {
@@ -106,6 +113,12 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 		case RequestKind::ConnectLogout:
 			eos_sdk_TEOSConnectLogoutRequest__Cancel(context->request);
 			break;
+		case RequestKind::StatsIngest:
+			eos_sdk_TEOSStatsIngestRequest__Cancel(context->request);
+			break;
+		case RequestKind::StatsQuery:
+			eos_sdk_TEOSStatsQueryRequest__Cancel(context->request);
+			break;
 		}
 		delete context;
 	}
@@ -134,6 +147,33 @@ public:
 
 private:
 	unsigned char *data_;
+};
+
+class UTF8StringArray {
+public:
+	explicit UTF8StringArray(BBArray *array) {
+		if (!array || array == &bbEmptyArray || array->dims != 1) return;
+		const int count = array->scales[0];
+		BBString **strings = static_cast<BBString **>(BBARRAYDATA(array, array->dims));
+		owned_.reserve(count);
+		values_.reserve(count);
+		for (int index = 0; index < count; ++index) {
+			auto *value = bbStringToUTF8String(strings[index]);
+			owned_.push_back(value);
+			values_.push_back(reinterpret_cast<const char *>(value));
+		}
+	}
+
+	~UTF8StringArray() {
+		for (auto *value : owned_) bbMemFree(value);
+	}
+
+	const char **data() { return values_.empty() ? nullptr : values_.data(); }
+	std::size_t size() const { return values_.size(); }
+
+private:
+	std::vector<unsigned char *> owned_;
+	std::vector<const char *> values_;
 };
 
 BBString *ToBBString(const char *value) {
@@ -220,6 +260,26 @@ void EOS_CALL ConnectLogoutCallback(const EOS_Connect_LogoutCallbackInfo *data) 
 	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSConnectLogoutRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL StatsIngestCallback(const EOS_Stats_IngestStatCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSStatsIngestRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL StatsQueryCallback(const EOS_Stats_OnQueryStatsCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSStatsQueryRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId);
 	if (terminal) delete context;
 }
 
@@ -358,6 +418,10 @@ EOS_HConnect bmx_eos_platform_get_connect_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetConnectInterface(handle) : nullptr;
 }
 
+EOS_HStats bmx_eos_platform_get_stats_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetStatsInterface(handle) : nullptr;
+}
+
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
 	BBString *maxId, BBString *maxToken, EOS_ELoginCredentialType type,
 	EOS_EExternalCredentialType externalType, EOS_EAuthScopeFlags scopeFlags, int loginFlags) {
@@ -484,6 +548,87 @@ int bmx_eos_connect_get_logged_in_users_count(EOS_HConnect connect) {
 
 EOS_ProductUserId bmx_eos_connect_get_logged_in_user_by_index(EOS_HConnect connect, int index) {
 	return connect ? EOS_Connect_GetLoggedInUserByIndex(connect, index) : nullptr;
+}
+
+void bmx_eos_stats_ingest(EOS_HPlatform platform, EOS_HStats stats, BBObject *request,
+	EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId,
+	BBArray *maxNames, BBArray *maxAmounts) {
+	UTF8StringArray names(maxNames);
+	const int *amounts = (maxAmounts && maxAmounts != &bbEmptyArray)
+		? static_cast<const int *>(BBARRAYDATA(maxAmounts, maxAmounts->dims))
+		: nullptr;
+	std::vector<EOS_Stats_IngestData> ingestData(names.size());
+	for (std::size_t index = 0; index < names.size(); ++index) {
+		ingestData[index].ApiVersion = EOS_STATS_INGESTDATA_API_LATEST;
+		ingestData[index].StatName = names.data()[index];
+		ingestData[index].IngestAmount = amounts[index];
+	}
+
+	EOS_Stats_IngestStatOptions options{};
+	options.ApiVersion = EOS_STATS_INGESTSTAT_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.Stats = ingestData.empty() ? nullptr : ingestData.data();
+	options.StatsCount = static_cast<uint32_t>(ingestData.size());
+	auto *context = CreateRequest(platform, request, RequestKind::StatsIngest);
+	EOS_Stats_IngestStat(stats, &options, context, StatsIngestCallback);
+}
+
+void bmx_eos_stats_query(EOS_HPlatform platform, EOS_HStats stats, BBObject *request,
+	EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId,
+	int64_t startTime, int64_t endTime, BBArray *maxNames) {
+	UTF8StringArray names(maxNames);
+	EOS_Stats_QueryStatsOptions options{};
+	options.ApiVersion = EOS_STATS_QUERYSTATS_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.StartTime = startTime;
+	options.EndTime = endTime;
+	options.StatNames = names.data();
+	options.StatNamesCount = static_cast<uint32_t>(names.size());
+	auto *context = CreateRequest(platform, request, RequestKind::StatsQuery);
+	EOS_Stats_QueryStats(stats, &options, context, StatsQueryCallback);
+}
+
+int bmx_eos_stats_get_count(EOS_HStats stats, EOS_ProductUserId targetUserId) {
+	EOS_Stats_GetStatCountOptions options{};
+	options.ApiVersion = EOS_STATS_GETSTATSCOUNT_API_LATEST;
+	options.TargetUserId = targetUserId;
+	return static_cast<int>(EOS_Stats_GetStatsCount(stats, &options));
+}
+
+static EOS_EResult CopyStat(EOS_Stats_Stat *stat, BBString **name,
+	int64_t *startTime, int64_t *endTime, int *value, EOS_EResult result) {
+	if (result != EOS_EResult::EOS_Success || !stat) return result;
+	*name = ToBBString(stat->Name);
+	*startTime = stat->StartTime;
+	*endTime = stat->EndTime;
+	*value = stat->Value;
+	EOS_Stats_Stat_Release(stat);
+	return result;
+}
+
+EOS_EResult bmx_eos_stats_copy_by_index(EOS_HStats stats, EOS_ProductUserId targetUserId,
+	unsigned int index, BBString **name, int64_t *startTime, int64_t *endTime, int *value) {
+	EOS_Stats_CopyStatByIndexOptions options{};
+	options.ApiVersion = EOS_STATS_COPYSTATBYINDEX_API_LATEST;
+	options.TargetUserId = targetUserId;
+	options.StatIndex = index;
+	EOS_Stats_Stat *stat = nullptr;
+	EOS_EResult result = EOS_Stats_CopyStatByIndex(stats, &options, &stat);
+	return CopyStat(stat, name, startTime, endTime, value, result);
+}
+
+EOS_EResult bmx_eos_stats_copy_by_name(EOS_HStats stats, EOS_ProductUserId targetUserId,
+	BBString *maxName, BBString **name, int64_t *startTime, int64_t *endTime, int *value) {
+	UTF8String nativeName(maxName);
+	EOS_Stats_CopyStatByNameOptions options{};
+	options.ApiVersion = EOS_STATS_COPYSTATBYNAME_API_LATEST;
+	options.TargetUserId = targetUserId;
+	options.Name = nativeName.required();
+	EOS_Stats_Stat *stat = nullptr;
+	EOS_EResult result = EOS_Stats_CopyStatByName(stats, &options, &stat);
+	return CopyStat(stat, name, startTime, endTime, value, result);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

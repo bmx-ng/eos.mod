@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.2.0"
+ModuleInfo "Version: 0.3.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -19,6 +19,8 @@ ModuleInfo "History: 0.1.0"
 ModuleInfo "History: Initial lifecycle, platform, logging, result, and identity foundation."
 ModuleInfo "History: 0.2.0"
 ModuleInfo "History: Added Auth and Connect login, logout, token, enumeration, and user creation foundations."
+ModuleInfo "History: 0.3.0"
+ModuleInfo "History: Added Stats ingest, query, and cached-result access."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -45,6 +47,9 @@ Import "glue/glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
+Const EOS_STATS_MAX_INGEST_STATS:Int = 3000
+Const EOS_STATS_MAX_QUERY_STATS:Int = 1000
+Const EOS_STATS_TIME_UNDEFINED:Long = -1
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -304,6 +309,35 @@ Type TEOSConnectLoginOptions
 	Field UserLoginInfo:TEOSConnectUserLoginInfo
 End Type
 
+Type TEOSStatsIngestData
+	Field Name:String
+	Field IngestAmount:Int
+End Type
+
+Type TEOSStatsIngestOptions
+	Field LocalUserId:TEOSProductUserId
+	Field TargetUserId:TEOSProductUserId
+	Field Stats:TEOSStatsIngestData[]
+End Type
+
+Type TEOSStatsQueryOptions
+	Field LocalUserId:TEOSProductUserId
+	Field TargetUserId:TEOSProductUserId
+	Field StartTime:Long = EOS_STATS_TIME_UNDEFINED
+	Field EndTime:Long = EOS_STATS_TIME_UNDEFINED
+	Field StatNames:String[]
+End Type
+
+Rem
+bbdoc: One stat copied from the local EOS query cache.
+End Rem
+Type TEOSStat
+	Field Name:String
+	Field StartTime:Long
+	Field EndTime:Long
+	Field Value:Int
+End Type
+
 Type TEOSAuthPinGrantInfo
 	Field UserCode:String
 	Field VerificationURI:String
@@ -412,6 +446,14 @@ End Interface
 
 Interface IEOSConnectLogoutListener
 	Method OnEOSConnectLogout(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSStatsIngestListener
+	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSStatsQueryListener
+	Method OnEOSStatsQuery(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
 End Interface
 
 Interface IEOSLogListener
@@ -593,6 +635,14 @@ Type TEOSPlatform
 	Method Connect:TEOSConnect()
 		If Not _handle Then Return Null
 		Return TEOSConnect._Create(Self, bmx_eos_platform_get_connect_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Stats interface.
+	End Rem
+	Method Stats:TEOSStats()
+		If Not _handle Then Return Null
+		Return TEOSStats._Create(Self, bmx_eos_platform_get_stats_interface(_handle))
 	End Method
 
 	Rem
@@ -874,6 +924,74 @@ Type TEOSConnectLogoutRequest
 	End Method
 End Type
 
+Type TEOSStatsIngestRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSStatsIngestListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSStatsIngestRequest(owner:TEOSPlatform, listener:IEOSStatsIngestListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSStatsIngestRequest = New TEOSStatsIngestRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSStatsIngestRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSStatsIngestListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSStatsIngest(result, TEOSProductUserId._Create(localUserHandle), TEOSProductUserId._Create(targetUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSStatsIngestRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSStatsQueryRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSStatsQueryListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSStatsQueryRequest(owner:TEOSPlatform, listener:IEOSStatsQueryListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSStatsQueryRequest = New TEOSStatsQueryRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSStatsQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSStatsQueryListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSStatsQuery(result, TEOSProductUserId._Create(localUserHandle), TEOSProductUserId._Create(targetUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSStatsQueryRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1037,6 +1155,106 @@ Type TEOSConnect
 	End Method
 End Type
 
+Rem
+bbdoc: EOS game-services Stats interface for one platform.
+about: Query operations populate an EOS-managed local cache. Use #StatsCount,
+#CopyStatByIndex, or #CopyStatByName after a successful query.
+End Rem
+Type TEOSStats
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSStats(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local stats:TEOSStats = New TEOSStats
+		stats._owner = owner
+		stats._handle = handle
+		Return stats
+	End Function
+
+	Rem
+	bbdoc: Adds one or more values to the target user's configured stats.
+	about: A successful callback confirms that the request reached the service;
+	backend processing and related achievement unlocks may occur later.
+	End Rem
+	Method Ingest:TEOSStatsIngestRequest(options:TEOSStatsIngestOptions, listener:IEOSStatsIngestListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		If Not options.TargetUserId Or Not options.TargetUserId.IsValid() Then Return Null
+		If Not options.Stats Or options.Stats.Length = 0 Or options.Stats.Length > EOS_STATS_MAX_INGEST_STATS Then Return Null
+
+		Local names:String[options.Stats.Length]
+		Local amounts:Int[options.Stats.Length]
+		For Local index:Int = 0 Until options.Stats.Length
+			If Not options.Stats[index] Or Not options.Stats[index].Name Then Return Null
+			names[index] = options.Stats[index].Name
+			amounts[index] = options.Stats[index].IngestAmount
+		Next
+
+		Local localUserHandle:Byte Ptr
+		If options.LocalUserId Then localUserHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSStatsIngestRequest = TEOSStatsIngestRequest._Create(_owner, listener)
+		bmx_eos_stats_ingest(_owner._NativeHandle(), _handle, request, localUserHandle, options.TargetUserId._NativeHandle(), names, amounts)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Queries stats for a Product User and updates the local Stats cache.
+	about: Leave StatNames empty to query all available stats. StartTime and
+	EndTime default to #EOS_STATS_TIME_UNDEFINED.
+	End Rem
+	Method Query:TEOSStatsQueryRequest(options:TEOSStatsQueryOptions, listener:IEOSStatsQueryListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		If Not options.TargetUserId Or Not options.TargetUserId.IsValid() Then Return Null
+		If options.StatNames And options.StatNames.Length > EOS_STATS_MAX_QUERY_STATS Then Return Null
+		If options.StatNames Then
+			For Local name:String = EachIn options.StatNames
+				If Not name Then Return Null
+			Next
+		End If
+
+		Local localUserHandle:Byte Ptr
+		If options.LocalUserId Then localUserHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSStatsQueryRequest = TEOSStatsQueryRequest._Create(_owner, listener)
+		bmx_eos_stats_query(_owner._NativeHandle(), _handle, request, localUserHandle, options.TargetUserId._NativeHandle(), options.StartTime, options.EndTime, options.StatNames)
+		Return request
+	End Method
+
+	Method StatsCount:Int(targetUserId:TEOSProductUserId)
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return 0
+		Return bmx_eos_stats_get_count(_handle, targetUserId._NativeHandle())
+	End Method
+
+	Method CopyStatByIndex:EEOSResult(targetUserId:TEOSProductUserId, index:Int, stat:TEOSStat Var)
+		stat = Null
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local name:String, startTime:Long, endTime:Long, value:Int
+		Local result:EEOSResult = bmx_eos_stats_copy_by_index(_handle, targetUserId._NativeHandle(), UInt(index), name, startTime, endTime, value)
+		If result <> EEOSResult.Success Then Return result
+		stat = New TEOSStat
+		stat.Name = name
+		stat.StartTime = startTime
+		stat.EndTime = endTime
+		stat.Value = value
+		Return result
+	End Method
+
+	Method CopyStatByName:EEOSResult(targetUserId:TEOSProductUserId, statName:String, stat:TEOSStat Var)
+		stat = Null
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Or Not statName Then Return EEOSResult.InvalidParameters
+		Local name:String, startTime:Long, endTime:Long, value:Int
+		Local result:EEOSResult = bmx_eos_stats_copy_by_name(_handle, targetUserId._NativeHandle(), statName, name, startTime, endTime, value)
+		If result <> EEOSResult.Success Then Return result
+		stat = New TEOSStat
+		stat.Name = name
+		stat.StartTime = startTime
+		stat.EndTime = endTime
+		stat.Value = value
+		Return result
+	End Method
+End Type
+
 Private
 
 Extern
@@ -1055,6 +1273,7 @@ Extern
 	Function bmx_eos_platform_release(handle:Byte Ptr)
 	Function bmx_eos_platform_get_auth_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_connect_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_stats_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -1068,6 +1287,12 @@ Extern
 	Function bmx_eos_connect_logout(platformHandle:Byte Ptr, connectHandle:Byte Ptr, request:TEOSConnectLogoutRequest, localUserHandle:Byte Ptr)
 	Function bmx_eos_connect_get_logged_in_users_count:Int(connectHandle:Byte Ptr)
 	Function bmx_eos_connect_get_logged_in_user_by_index:Byte Ptr(connectHandle:Byte Ptr, index:Int)
+
+	Function bmx_eos_stats_ingest(platformHandle:Byte Ptr, statsHandle:Byte Ptr, request:TEOSStatsIngestRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, names:String[], amounts:Int[])
+	Function bmx_eos_stats_query(platformHandle:Byte Ptr, statsHandle:Byte Ptr, request:TEOSStatsQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, startTime:Long, endTime:Long, names:String[])
+	Function bmx_eos_stats_get_count:Int(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_stats_copy_by_index:EEOSResult(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, name:String Var, startTime:Long Var, endTime:Long Var, value:Int Var)
+	Function bmx_eos_stats_copy_by_name:EEOSResult(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr, statName:String, name:String Var, startTime:Long Var, endTime:Long Var, value:Int Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
