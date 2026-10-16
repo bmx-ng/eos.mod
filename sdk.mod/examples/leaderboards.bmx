@@ -5,11 +5,13 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TLeaderboardsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener
+Type TLeaderboardsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSLeaderboardsQueryUserScoresListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field Leaderboards:TEOSLeaderboards
 	Field UserId:TEOSProductUserId
+	Field StatName:String
+	Field Aggregation:EEOSLeaderboardAggregation
 	Field Done:Int
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		Print "Auth login: " + EOSResultString(result)
@@ -50,6 +52,8 @@ Type TLeaderboardsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListene
 			End If
 		Next
 		If first Then
+			StatName = first.StatName
+			Aggregation = first.Aggregation
 			If Not Leaderboards.QueryRanks(UserId, first.LeaderboardId, Self) Then Done = True
 		Else
 			Done = True
@@ -64,6 +68,26 @@ Type TLeaderboardsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListene
 			For Local index:Int = 0 Until count
 				Local record:TEOSLeaderboardRecord
 				If Leaderboards.CopyRecordByIndex(index, record) = EEOSResult.Success Then Print record.Rank + ". " + record.UserDisplayName + " = " + record.Score
+			Next
+		End If
+		If result = EEOSResult.Success And StatName Then
+			Local statInfo:TEOSLeaderboardUserScoresQueryStatInfo = New TEOSLeaderboardUserScoresQueryStatInfo
+			statInfo.StatName = StatName
+			statInfo.Aggregation = Aggregation
+			Local options:TEOSLeaderboardsQueryUserScoresOptions = New TEOSLeaderboardsQueryUserScoresOptions
+			options.LocalUserId = UserId; options.UserIds = [UserId]; options.StatInfo = [statInfo]
+			If Not Leaderboards.QueryUserScores(options, Self) Then Done = True
+		Else
+			Done = True
+		End If
+	End Method
+	Method OnEOSLeaderboardsQueryUserScores(result:EEOSResult)
+		Print "User scores for " + StatName + ": " + EOSResultString(result)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result = EEOSResult.Success Then
+			For Local index:Int = 0 Until Leaderboards.UserScoreCount(StatName)
+				Local userScore:TEOSLeaderboardUserScore
+				If Leaderboards.CopyUserScoreByIndex(index, StatName, userScore) = EEOSResult.Success Then Print userScore.UserId.ToString() + " = " + userScore.Score
 			Next
 		End If
 		Done = True
@@ -85,7 +109,7 @@ If AppArgs.Length > 1 Then configPath = AppArgs[1]
 If FileType(configPath) <> FILETYPE_FILE Then RuntimeError "Copy eos.local.conf.example to eos.local.conf and fill in your EOS values."
 Local config:String = LoadText(configPath)
 Local init:TEOSInitializeOptions = New TEOSInitializeOptions
-init.ProductName = "EOS Leaderboards example"; init.ProductVersion = "0.6.0"
+init.ProductName = "EOS Leaderboards example"; init.ProductVersion = "0.7.0"
 Local result:EEOSResult = EOSInitialize(init)
 If result <> EEOSResult.Success Then RuntimeError EOSResultString(result)
 Local options:TEOSPlatformOptions = New TEOSPlatformOptions

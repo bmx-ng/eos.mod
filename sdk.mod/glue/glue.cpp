@@ -47,6 +47,8 @@ void eos_sdk_TEOSLeaderboardsQueryDefinitionsRequest__Complete(BBObject *, EOS_E
 void eos_sdk_TEOSLeaderboardsQueryDefinitionsRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLeaderboardsQueryRanksRequest__Complete(BBObject *, EOS_EResult, BBString *);
 void eos_sdk_TEOSLeaderboardsQueryRanksRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Complete(BBObject *, EOS_EResult);
+void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -74,7 +76,8 @@ enum class RequestKind {
 	AchievementsQueryPlayer,
 	AchievementsUnlock,
 	LeaderboardsQueryDefinitions,
-	LeaderboardsQueryRanks
+	LeaderboardsQueryRanks,
+	LeaderboardsQueryUserScores
 };
 
 struct RequestContext {
@@ -152,6 +155,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LeaderboardsQueryRanks:
 			eos_sdk_TEOSLeaderboardsQueryRanksRequest__Cancel(context->request);
+			break;
+		case RequestKind::LeaderboardsQueryUserScores:
+			eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -422,6 +428,15 @@ void EOS_CALL LeaderboardsQueryRanksCallback(const EOS_Leaderboards_OnQueryLeade
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSLeaderboardsQueryRanksRequest__Complete(context->request, data->ResultCode,
 		ToBBString(data->LeaderboardId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LeaderboardsQueryUserScoresCallback(const EOS_Leaderboards_OnQueryLeaderboardUserScoresCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Complete(context->request, data->ResultCode);
 	if (terminal) delete context;
 }
 
@@ -1067,6 +1082,79 @@ EOS_EResult bmx_eos_leaderboards_copy_record_by_user(EOS_HLeaderboards leaderboa
 	EOS_Leaderboards_LeaderboardRecord *record = nullptr;
 	EOS_EResult result = EOS_Leaderboards_CopyLeaderboardRecordByUserId(leaderboards, &options, &record);
 	return CopyLeaderboardRecord(record, userId, rank, score, displayName, result);
+}
+
+void bmx_eos_leaderboards_query_user_scores(EOS_HPlatform platform, EOS_HLeaderboards leaderboards,
+	BBObject *request, EOS_ProductUserId localUserId, BBArray *maxUserIds,
+	BBArray *maxStatNames, BBArray *maxAggregations, int64_t startTime, int64_t endTime) {
+	const int userCount = maxUserIds && maxUserIds != &bbEmptyArray ? maxUserIds->scales[0] : 0;
+	auto *userData = userCount
+		? static_cast<void **>(BBARRAYDATA(maxUserIds, maxUserIds->dims)) : nullptr;
+	std::vector<EOS_ProductUserId> userIds(userCount);
+	for (int index = 0; index < userCount; ++index) {
+		userIds[index] = static_cast<EOS_ProductUserId>(userData[index]);
+	}
+	UTF8StringArray statNames(maxStatNames);
+	const int *aggregations = maxAggregations && maxAggregations != &bbEmptyArray
+		? static_cast<const int *>(BBARRAYDATA(maxAggregations, maxAggregations->dims)) : nullptr;
+	std::vector<EOS_Leaderboards_UserScoresQueryStatInfo> statInfo(statNames.size());
+	for (std::size_t index = 0; index < statNames.size(); ++index) {
+		statInfo[index].ApiVersion = EOS_LEADERBOARDS_USERSCORESQUERYSTATINFO_API_LATEST;
+		statInfo[index].StatName = statNames.data()[index];
+		statInfo[index].Aggregation = static_cast<EOS_ELeaderboardAggregation>(aggregations[index]);
+	}
+	EOS_Leaderboards_QueryLeaderboardUserScoresOptions options{};
+	options.ApiVersion = EOS_LEADERBOARDS_QUERYLEADERBOARDUSERSCORES_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.UserIds = userIds.data();
+	options.UserIdsCount = static_cast<uint32_t>(userIds.size());
+	options.StatInfo = statInfo.data();
+	options.StatInfoCount = static_cast<uint32_t>(statInfo.size());
+	options.StartTime = startTime;
+	options.EndTime = endTime;
+	auto *context = CreateRequest(platform, request, RequestKind::LeaderboardsQueryUserScores);
+	EOS_Leaderboards_QueryLeaderboardUserScores(leaderboards, &options, context, LeaderboardsQueryUserScoresCallback);
+}
+
+int bmx_eos_leaderboards_user_score_count(EOS_HLeaderboards leaderboards, BBString *maxStatName) {
+	UTF8String statName(maxStatName);
+	EOS_Leaderboards_GetLeaderboardUserScoreCountOptions options{};
+	options.ApiVersion = EOS_LEADERBOARDS_GETLEADERBOARDUSERSCORECOUNT_API_LATEST;
+	options.StatName = statName.required();
+	return static_cast<int>(EOS_Leaderboards_GetLeaderboardUserScoreCount(leaderboards, &options));
+}
+
+static EOS_EResult CopyLeaderboardUserScore(EOS_Leaderboards_LeaderboardUserScore *userScore,
+	EOS_ProductUserId *userId, int *score, EOS_EResult result) {
+	if (result != EOS_EResult::EOS_Success || !userScore) return result;
+	*userId = userScore->UserId;
+	*score = userScore->Score;
+	EOS_Leaderboards_LeaderboardUserScore_Release(userScore);
+	return result;
+}
+
+EOS_EResult bmx_eos_leaderboards_copy_user_score_by_index(EOS_HLeaderboards leaderboards,
+	unsigned int index, BBString *maxStatName, EOS_ProductUserId *userId, int *score) {
+	UTF8String statName(maxStatName);
+	EOS_Leaderboards_CopyLeaderboardUserScoreByIndexOptions options{};
+	options.ApiVersion = EOS_LEADERBOARDS_COPYLEADERBOARDUSERSCOREBYINDEX_API_LATEST;
+	options.LeaderboardUserScoreIndex = index;
+	options.StatName = statName.required();
+	EOS_Leaderboards_LeaderboardUserScore *userScore = nullptr;
+	EOS_EResult result = EOS_Leaderboards_CopyLeaderboardUserScoreByIndex(leaderboards, &options, &userScore);
+	return CopyLeaderboardUserScore(userScore, userId, score, result);
+}
+
+EOS_EResult bmx_eos_leaderboards_copy_user_score_by_user(EOS_HLeaderboards leaderboards,
+	EOS_ProductUserId requestedUserId, BBString *maxStatName, EOS_ProductUserId *userId, int *score) {
+	UTF8String statName(maxStatName);
+	EOS_Leaderboards_CopyLeaderboardUserScoreByUserIdOptions options{};
+	options.ApiVersion = EOS_LEADERBOARDS_COPYLEADERBOARDUSERSCOREBYUSERID_API_LATEST;
+	options.UserId = requestedUserId;
+	options.StatName = statName.required();
+	EOS_Leaderboards_LeaderboardUserScore *userScore = nullptr;
+	EOS_EResult result = EOS_Leaderboards_CopyLeaderboardUserScoreByUserId(leaderboards, &options, &userScore);
+	return CopyLeaderboardUserScore(userScore, userId, score, result);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

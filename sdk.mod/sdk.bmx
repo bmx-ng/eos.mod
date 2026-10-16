@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.6.0"
+ModuleInfo "Version: 0.7.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -27,6 +27,8 @@ ModuleInfo "History: 0.5.0"
 ModuleInfo "History: Added achievement unlocking and unlock notifications."
 ModuleInfo "History: 0.6.0"
 ModuleInfo "History: Added leaderboard definition and rank queries."
+ModuleInfo "History: 0.7.0"
+ModuleInfo "History: Added leaderboard multi-user score queries."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -418,6 +420,24 @@ Type TEOSLeaderboardRecord
 	Field UserDisplayName:String
 End Type
 
+Type TEOSLeaderboardUserScoresQueryStatInfo
+	Field StatName:String
+	Field Aggregation:EEOSLeaderboardAggregation
+End Type
+
+Type TEOSLeaderboardsQueryUserScoresOptions
+	Field LocalUserId:TEOSProductUserId
+	Field UserIds:TEOSProductUserId[]
+	Field StatInfo:TEOSLeaderboardUserScoresQueryStatInfo[]
+	Field StartTime:Long = EOS_LEADERBOARDS_TIME_UNDEFINED
+	Field EndTime:Long = EOS_LEADERBOARDS_TIME_UNDEFINED
+End Type
+
+Type TEOSLeaderboardUserScore
+	Field UserId:TEOSProductUserId
+	Field Score:Int
+End Type
+
 Type TEOSAuthPinGrantInfo
 	Field UserCode:String
 	Field VerificationURI:String
@@ -558,6 +578,10 @@ End Interface
 
 Interface IEOSLeaderboardsQueryRanksListener
 	Method OnEOSLeaderboardsQueryRanks(result:EEOSResult, leaderboardId:String)
+End Interface
+
+Interface IEOSLeaderboardsQueryUserScoresListener
+	Method OnEOSLeaderboardsQueryUserScores(result:EEOSResult)
 End Interface
 
 Interface IEOSLogListener
@@ -1306,6 +1330,32 @@ Type TEOSLeaderboardsQueryRanksRequest
 	End Method
 End Type
 
+Type TEOSLeaderboardsQueryUserScoresRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLeaderboardsQueryUserScoresListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLeaderboardsQueryUserScoresRequest(owner:TEOSPlatform, listener:IEOSLeaderboardsQueryUserScoresListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLeaderboardsQueryUserScoresRequest = New TEOSLeaderboardsQueryUserScoresRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLeaderboardsQueryUserScoresRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLeaderboardsQueryUserScoresListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLeaderboardsQueryUserScores(result)
+	End Function
+	Function _Cancel(request:TEOSLeaderboardsQueryUserScoresRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1801,6 +1851,53 @@ Type TEOSLeaderboards
 		If result = EEOSResult.Success Then record = _Record(userHandle, rank, score, displayName)
 		Return result
 	End Method
+	Method QueryUserScores:TEOSLeaderboardsQueryUserScoresRequest(options:TEOSLeaderboardsQueryUserScoresOptions, listener:IEOSLeaderboardsQueryUserScoresListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		If Not options.UserIds Or options.UserIds.Length = 0 Or Not options.StatInfo Or options.StatInfo.Length = 0 Then Return Null
+		Local userHandles:Byte Ptr[options.UserIds.Length]
+		For Local index:Int = 0 Until options.UserIds.Length
+			If Not options.UserIds[index] Or Not options.UserIds[index].IsValid() Then Return Null
+			userHandles[index] = options.UserIds[index]._NativeHandle()
+		Next
+		Local statNames:String[options.StatInfo.Length]
+		Local aggregations:Int[options.StatInfo.Length]
+		For Local index:Int = 0 Until options.StatInfo.Length
+			If Not options.StatInfo[index] Or Not options.StatInfo[index].StatName Then Return Null
+			statNames[index] = options.StatInfo[index].StatName
+			aggregations[index] = Int(options.StatInfo[index].Aggregation)
+		Next
+		Local localHandle:Byte Ptr
+		If options.LocalUserId Then localHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSLeaderboardsQueryUserScoresRequest = TEOSLeaderboardsQueryUserScoresRequest._Create(_owner, listener)
+		bmx_eos_leaderboards_query_user_scores(_owner._NativeHandle(), _handle, request, localHandle, userHandles, statNames, aggregations, options.StartTime, options.EndTime)
+		Return request
+	End Method
+	Method UserScoreCount:Int(statName:String)
+		If Not _owner Or Not _owner.IsValid() Or Not statName Then Return 0
+		Return bmx_eos_leaderboards_user_score_count(_handle, statName)
+	End Method
+	Method CopyUserScoreByIndex:EEOSResult(index:Int, statName:String, userScore:TEOSLeaderboardUserScore Var)
+		userScore = Null
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Or Not statName Then Return EEOSResult.InvalidParameters
+		Local userHandle:Byte Ptr, score:Int
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_user_score_by_index(_handle, UInt(index), statName, userHandle, score)
+		If result = EEOSResult.Success Then
+			userScore = New TEOSLeaderboardUserScore
+			userScore.UserId = TEOSProductUserId._Create(userHandle); userScore.Score = score
+		End If
+		Return result
+	End Method
+	Method CopyUserScoreByUserId:EEOSResult(userId:TEOSProductUserId, statName:String, userScore:TEOSLeaderboardUserScore Var)
+		userScore = Null
+		If Not _owner Or Not _owner.IsValid() Or Not userId Or Not userId.IsValid() Or Not statName Then Return EEOSResult.InvalidParameters
+		Local userHandle:Byte Ptr, score:Int
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_user_score_by_user(_handle, userId._NativeHandle(), statName, userHandle, score)
+		If result = EEOSResult.Success Then
+			userScore = New TEOSLeaderboardUserScore
+			userScore.UserId = TEOSProductUserId._Create(userHandle); userScore.Score = score
+		End If
+		Return result
+	End Method
 End Type
 
 Private
@@ -1864,6 +1961,10 @@ Extern
 	Function bmx_eos_leaderboards_record_count:Int(leaderboardsHandle:Byte Ptr)
 	Function bmx_eos_leaderboards_copy_record_by_index:EEOSResult(leaderboardsHandle:Byte Ptr, index:UInt, userHandle:Byte Ptr Var, rank:UInt Var, score:Int Var, displayName:String Var)
 	Function bmx_eos_leaderboards_copy_record_by_user:EEOSResult(leaderboardsHandle:Byte Ptr, requestedUserHandle:Byte Ptr, userHandle:Byte Ptr Var, rank:UInt Var, score:Int Var, displayName:String Var)
+	Function bmx_eos_leaderboards_query_user_scores(platformHandle:Byte Ptr, leaderboardsHandle:Byte Ptr, request:TEOSLeaderboardsQueryUserScoresRequest, localUserHandle:Byte Ptr, userHandles:Byte Ptr[], statNames:String[], aggregations:Int[], startTime:Long, endTime:Long)
+	Function bmx_eos_leaderboards_user_score_count:Int(leaderboardsHandle:Byte Ptr, statName:String)
+	Function bmx_eos_leaderboards_copy_user_score_by_index:EEOSResult(leaderboardsHandle:Byte Ptr, index:UInt, statName:String, userHandle:Byte Ptr Var, score:Int Var)
+	Function bmx_eos_leaderboards_copy_user_score_by_user:EEOSResult(leaderboardsHandle:Byte Ptr, requestedUserHandle:Byte Ptr, statName:String, userHandle:Byte Ptr Var, score:Int Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
