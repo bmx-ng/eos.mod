@@ -3,14 +3,32 @@
 #include <brl.mod/blitz.mod/blitz.h>
 
 #include "../SDK/Include/eos_sdk.h"
+#include "../SDK/Include/eos_auth.h"
+#include "../SDK/Include/eos_connect.h"
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_version.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 #include <string>
+#include <vector>
+
+extern "C" {
+void eos_sdk_TEOSAuthLoginRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId,
+	BBString *, BBString *, int, BBString *, EOS_ContinuanceToken, EOS_EpicAccountId);
+void eos_sdk_TEOSAuthLoginRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAuthLogoutRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId);
+void eos_sdk_TEOSAuthLogoutRequest__Cancel(BBObject *);
+void eos_sdk_TEOSConnectLoginRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ContinuanceToken);
+void eos_sdk_TEOSConnectLoginRequest__Cancel(BBObject *);
+void eos_sdk_TEOSConnectCreateUserRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
+void eos_sdk_TEOSConnectCreateUserRequest__Cancel(BBObject *);
+void eos_sdk_TEOSConnectLogoutRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
+void eos_sdk_TEOSConnectLogoutRequest__Cancel(BBObject *);
+}
 
 namespace {
 
@@ -24,6 +42,74 @@ constexpr std::size_t kMaximumQueuedLogs = 1024;
 std::atomic<bool> g_loggingEnabled{false};
 std::mutex g_logMutex;
 std::deque<LogEntry> g_logQueue;
+
+enum class RequestKind {
+	AuthLogin,
+	AuthLogout,
+	ConnectLogin,
+	ConnectCreateUser,
+	ConnectLogout
+};
+
+struct RequestContext {
+	EOS_HPlatform platform;
+	BBObject *request;
+	RequestKind kind;
+
+	RequestContext(EOS_HPlatform platform, BBObject *request, RequestKind kind)
+		: platform(platform), request(request), kind(kind) {
+		BBRETAIN(request);
+	}
+
+	~RequestContext() {
+		BBRELEASE(request);
+	}
+};
+
+std::vector<RequestContext *> g_requests;
+
+RequestContext *CreateRequest(EOS_HPlatform platform, BBObject *request, RequestKind kind) {
+	auto *context = new RequestContext(platform, request, kind);
+	g_requests.push_back(context);
+	return context;
+}
+
+void CompleteRequest(RequestContext *context) {
+	auto found = std::find(g_requests.begin(), g_requests.end(), context);
+	if (found != g_requests.end()) {
+		g_requests.erase(found);
+	}
+}
+
+void CancelPlatformRequests(EOS_HPlatform platform) {
+	for (std::size_t index = 0; index < g_requests.size();) {
+		RequestContext *context = g_requests[index];
+		if (context->platform != platform) {
+			++index;
+			continue;
+		}
+
+		g_requests.erase(g_requests.begin() + static_cast<std::ptrdiff_t>(index));
+		switch (context->kind) {
+		case RequestKind::AuthLogin:
+			eos_sdk_TEOSAuthLoginRequest__Cancel(context->request);
+			break;
+		case RequestKind::AuthLogout:
+			eos_sdk_TEOSAuthLogoutRequest__Cancel(context->request);
+			break;
+		case RequestKind::ConnectLogin:
+			eos_sdk_TEOSConnectLoginRequest__Cancel(context->request);
+			break;
+		case RequestKind::ConnectCreateUser:
+			eos_sdk_TEOSConnectCreateUserRequest__Cancel(context->request);
+			break;
+		case RequestKind::ConnectLogout:
+			eos_sdk_TEOSConnectLogoutRequest__Cancel(context->request);
+			break;
+		}
+		delete context;
+	}
+}
 
 class UTF8String {
 public:
@@ -75,6 +161,66 @@ void EOS_CALL LogCallback(const EOS_LogMessage *message) {
 void ClearLogQueue() {
 	std::lock_guard<std::mutex> lock(g_logMutex);
 	g_logQueue.clear();
+}
+
+void EOS_CALL AuthLoginCallback(const EOS_Auth_LoginCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+
+	BBString *userCode = &bbEmptyString;
+	BBString *verificationUri = &bbEmptyString;
+	BBString *verificationUriComplete = &bbEmptyString;
+	int expiresIn = 0;
+	if (data->PinGrantInfo) {
+		userCode = ToBBString(data->PinGrantInfo->UserCode);
+		verificationUri = ToBBString(data->PinGrantInfo->VerificationURI);
+		verificationUriComplete = ToBBString(data->PinGrantInfo->VerificationURIComplete);
+		expiresIn = data->PinGrantInfo->ExpiresIn;
+	}
+
+	eos_sdk_TEOSAuthLoginRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, userCode, verificationUri, expiresIn,
+		verificationUriComplete, data->ContinuanceToken, data->SelectedAccountId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL AuthLogoutCallback(const EOS_Auth_LogoutCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSAuthLogoutRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL ConnectLoginCallback(const EOS_Connect_LoginCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSConnectLoginRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->ContinuanceToken);
+	if (terminal) delete context;
+}
+
+void EOS_CALL ConnectCreateUserCallback(const EOS_Connect_CreateUserCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSConnectCreateUserRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL ConnectLogoutCallback(const EOS_Connect_LogoutCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSConnectLogoutRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
+	if (terminal) delete context;
 }
 
 } // namespace
@@ -199,8 +345,145 @@ void bmx_eos_platform_tick(EOS_HPlatform handle) {
 
 void bmx_eos_platform_release(EOS_HPlatform handle) {
 	if (handle) {
+		CancelPlatformRequests(handle);
 		EOS_Platform_Release(handle);
 	}
+}
+
+EOS_HAuth bmx_eos_platform_get_auth_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetAuthInterface(handle) : nullptr;
+}
+
+EOS_HConnect bmx_eos_platform_get_connect_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetConnectInterface(handle) : nullptr;
+}
+
+void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
+	BBString *maxId, BBString *maxToken, EOS_ELoginCredentialType type,
+	EOS_EExternalCredentialType externalType, EOS_EAuthScopeFlags scopeFlags, int loginFlags) {
+	UTF8String id(maxId);
+	UTF8String token(maxToken);
+	EOS_Auth_Credentials credentials{};
+	credentials.ApiVersion = EOS_AUTH_CREDENTIALS_API_LATEST;
+	credentials.Id = id.optional();
+	credentials.Token = token.optional();
+	credentials.Type = type;
+	credentials.ExternalType = externalType;
+
+	EOS_Auth_LoginOptions options{};
+	options.ApiVersion = EOS_AUTH_LOGIN_API_LATEST;
+	options.Credentials = &credentials;
+	options.ScopeFlags = scopeFlags;
+	options.LoginFlags = static_cast<uint64_t>(loginFlags);
+	auto *context = CreateRequest(platform, request, RequestKind::AuthLogin);
+	EOS_Auth_Login(auth, &options, context, AuthLoginCallback);
+}
+
+void bmx_eos_auth_logout(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
+	EOS_EpicAccountId localUserId) {
+	EOS_Auth_LogoutOptions options{};
+	options.ApiVersion = EOS_AUTH_LOGOUT_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::AuthLogout);
+	EOS_Auth_Logout(auth, &options, context, AuthLogoutCallback);
+}
+
+int bmx_eos_auth_get_logged_in_accounts_count(EOS_HAuth auth) {
+	return auth ? EOS_Auth_GetLoggedInAccountsCount(auth) : 0;
+}
+
+EOS_EpicAccountId bmx_eos_auth_get_logged_in_account_by_index(EOS_HAuth auth, int index) {
+	return auth ? EOS_Auth_GetLoggedInAccountByIndex(auth, index) : nullptr;
+}
+
+EOS_EResult bmx_eos_auth_copy_user_auth_token(EOS_HAuth auth, EOS_EpicAccountId localUserId,
+	BBString **app, BBString **clientId, EOS_EpicAccountId *accountId,
+	BBString **accessToken, double *expiresIn,
+	BBString **expiresAt, int *authType, BBString **refreshToken,
+	double *refreshExpiresIn, BBString **refreshExpiresAt) {
+	EOS_Auth_CopyUserAuthTokenOptions options{};
+	options.ApiVersion = EOS_AUTH_COPYUSERAUTHTOKEN_API_LATEST;
+	EOS_Auth_Token *token = nullptr;
+	EOS_EResult result = EOS_Auth_CopyUserAuthToken(auth, &options, localUserId, &token);
+	if (result != EOS_EResult::EOS_Success || !token) return result;
+
+	*app = ToBBString(token->App);
+	*clientId = ToBBString(token->ClientId);
+	*accountId = token->AccountId;
+	*accessToken = ToBBString(token->AccessToken);
+	*expiresIn = token->ExpiresIn;
+	*expiresAt = ToBBString(token->ExpiresAt);
+	*authType = static_cast<int>(token->AuthType);
+	*refreshToken = ToBBString(token->RefreshToken);
+	*refreshExpiresIn = token->RefreshExpiresIn;
+	*refreshExpiresAt = ToBBString(token->RefreshExpiresAt);
+	EOS_Auth_Token_Release(token);
+	return result;
+}
+
+EOS_EResult bmx_eos_auth_copy_id_token(EOS_HAuth auth, EOS_EpicAccountId accountId,
+	EOS_EpicAccountId *tokenAccountId, BBString **jsonWebToken) {
+	EOS_Auth_CopyIdTokenOptions options{};
+	options.ApiVersion = EOS_AUTH_COPYIDTOKEN_API_LATEST;
+	options.AccountId = accountId;
+	EOS_Auth_IdToken *token = nullptr;
+	EOS_EResult result = EOS_Auth_CopyIdToken(auth, &options, &token);
+	if (result != EOS_EResult::EOS_Success || !token) return result;
+
+	*tokenAccountId = token->AccountId;
+	*jsonWebToken = ToBBString(token->JsonWebToken);
+	EOS_Auth_IdToken_Release(token);
+	return result;
+}
+
+void bmx_eos_connect_login(EOS_HPlatform platform, EOS_HConnect connect, BBObject *request,
+	BBString *maxToken, EOS_EExternalCredentialType type, BBString *maxDisplayName,
+	BBString *maxNsaIdToken, int useUserLoginInfo) {
+	UTF8String token(maxToken);
+	UTF8String displayName(maxDisplayName);
+	UTF8String nsaIdToken(maxNsaIdToken);
+	EOS_Connect_Credentials credentials{};
+	credentials.ApiVersion = EOS_CONNECT_CREDENTIALS_API_LATEST;
+	credentials.Token = token.required();
+	credentials.Type = type;
+
+	EOS_Connect_UserLoginInfo userLoginInfo{};
+	userLoginInfo.ApiVersion = EOS_CONNECT_USERLOGININFO_API_LATEST;
+	userLoginInfo.DisplayName = displayName.optional();
+	userLoginInfo.NsaIdToken = nsaIdToken.optional();
+
+	EOS_Connect_LoginOptions options{};
+	options.ApiVersion = EOS_CONNECT_LOGIN_API_LATEST;
+	options.Credentials = &credentials;
+	options.UserLoginInfo = useUserLoginInfo ? &userLoginInfo : nullptr;
+	auto *context = CreateRequest(platform, request, RequestKind::ConnectLogin);
+	EOS_Connect_Login(connect, &options, context, ConnectLoginCallback);
+}
+
+void bmx_eos_connect_create_user(EOS_HPlatform platform, EOS_HConnect connect,
+	BBObject *request, EOS_ContinuanceToken continuanceToken) {
+	EOS_Connect_CreateUserOptions options{};
+	options.ApiVersion = EOS_CONNECT_CREATEUSER_API_LATEST;
+	options.ContinuanceToken = continuanceToken;
+	auto *context = CreateRequest(platform, request, RequestKind::ConnectCreateUser);
+	EOS_Connect_CreateUser(connect, &options, context, ConnectCreateUserCallback);
+}
+
+void bmx_eos_connect_logout(EOS_HPlatform platform, EOS_HConnect connect,
+	BBObject *request, EOS_ProductUserId localUserId) {
+	EOS_Connect_LogoutOptions options{};
+	options.ApiVersion = EOS_CONNECT_LOGOUT_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::ConnectLogout);
+	EOS_Connect_Logout(connect, &options, context, ConnectLogoutCallback);
+}
+
+int bmx_eos_connect_get_logged_in_users_count(EOS_HConnect connect) {
+	return connect ? EOS_Connect_GetLoggedInUsersCount(connect) : 0;
+}
+
+EOS_ProductUserId bmx_eos_connect_get_logged_in_user_by_index(EOS_HConnect connect, int index) {
+	return connect ? EOS_Connect_GetLoggedInUserByIndex(connect, index) : nullptr;
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

@@ -1,0 +1,16 @@
+# Copy this file to eos.local.conf and fill in values from the EOS Developer Portal.
+# eos.local.conf is ignored by Git.
+
+PRODUCT_ID=
+SANDBOX_ID=
+DEPLOYMENT_ID=
+CLIENT_ID=
+CLIENT_SECRET=
+ENCRYPTION_KEY=
+
+# Values configured in the EOS Developer Authentication Tool.
+DEV_AUTH_HOST=localhost:6547
+DEV_AUTH_CREDENTIAL=
+
+# Set to 1 only when this test should create a Product User for a new login.
+CREATE_MISSING_PRODUCT_USER=0

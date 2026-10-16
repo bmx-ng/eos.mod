@@ -11,12 +11,14 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.1.0"
+ModuleInfo "Version: 0.2.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
 ModuleInfo "History: 0.1.0"
 ModuleInfo "History: Initial lifecycle, platform, logging, result, and identity foundation."
+ModuleInfo "History: 0.2.0"
+ModuleInfo "History: Added Auth and Connect login, logout, token, enumeration, and user creation foundations."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -94,6 +96,42 @@ Enum EEOSResult
 	NetworkDisconnected = 41
 	InsufficientOutputBuffer = 42
 	ClientPolicyMissingAction = 43
+	AuthAccountLocked = 1001
+	AuthAccountLockedForUpdate = 1002
+	AuthInvalidRefreshToken = 1003
+	AuthInvalidToken = 1004
+	AuthAuthenticationFailure = 1005
+	AuthInvalidPlatformToken = 1006
+	AuthWrongAccount = 1007
+	AuthWrongClient = 1008
+	AuthFullAccountRequired = 1009
+	AuthHeadlessAccountRequired = 1010
+	AuthPasswordResetRequired = 1011
+	AuthPasswordCannotBeReused = 1012
+	AuthExpired = 1013
+	AuthScopeConsentRequired = 1014
+	AuthApplicationNotFound = 1015
+	AuthScopeNotFound = 1016
+	AuthAccountFeatureRestricted = 1017
+	AuthAccountPortalLoadError = 1018
+	AuthCorrectiveActionRequired = 1019
+	AuthPinGrantCode = 1020
+	AuthPinGrantExpired = 1021
+	AuthPinGrantPending = 1022
+	AuthExternalAuthNotLinked = 1030
+	AuthExternalAuthRevoked = 1032
+	AuthExternalAuthInvalid = 1033
+	AuthExternalAuthRestricted = 1034
+	AuthExternalAuthCannotLogin = 1035
+	AuthExternalAuthExpired = 1036
+	AuthExternalAuthIsLastLoginType = 1037
+	AuthExchangeCodeNotFound = 1040
+	AuthOriginatingExchangeCodeSessionExpired = 1041
+	AuthAccountNotActive = 1050
+	AuthMFARequired = 1060
+	AuthParentalControls = 1070
+	AuthNoRealId = 1080
+	AuthUserInterfaceRequired = 1090
 End Enum
 
 Enum EEOSLogLevel
@@ -154,6 +192,60 @@ Enum EEOSPlatformFlags Flags
 	EnableOverlayDebugLogging = $00100
 End Enum
 
+Enum EEOSLoginCredentialType
+	Password = 0
+	ExchangeCode = 1
+	PersistentAuth = 2
+	DeviceCode = 3
+	Developer = 4
+	RefreshToken = 5
+	AccountPortal = 6
+	ExternalAuth = 7
+End Enum
+
+Enum EEOSExternalCredentialType
+	Epic = 0
+	SteamAppTicket = 1
+	PSNIdToken = 2
+	XBLXSTSToken = 3
+	DiscordAccessToken = 4
+	GOGSessionTicket = 5
+	NintendoIdToken = 6
+	NintendoNSAIdToken = 7
+	UplayAccessToken = 8
+	OpenIDAccessToken = 9
+	DeviceIdAccessToken = 10
+	AppleIdToken = 11
+	GoogleIdToken = 12
+	OculusUserIdNonce = 13
+	ItchioJWT = 14
+	ItchioKey = 15
+	EpicIdToken = 16
+	AmazonAccessToken = 17
+	SteamSessionTicket = 18
+	ViveportUserToken = 19
+End Enum
+
+Enum EEOSAuthScopeFlags Flags
+	None = 0
+	BasicProfile = $1
+	FriendsList = $2
+	Presence = $4
+	FriendsManagement = $8
+	Email = $10
+	Country = $20
+End Enum
+
+Enum EEOSAuthLoginFlags Flags
+	None = 0
+	NoUserInterface = $1
+End Enum
+
+Enum EEOSAuthTokenType
+	Client = 0
+	User = 1
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -183,6 +275,144 @@ Type TEOSPlatformOptions
 	Field UseTaskNetworkTimeout:Int
 	Field TaskNetworkTimeoutSeconds:Double
 End Type
+
+Type TEOSAuthCredentials
+	Field Id:String
+	Field Token:String
+	Field Type:EEOSLoginCredentialType
+	Field ExternalType:EEOSExternalCredentialType
+End Type
+
+Type TEOSAuthLoginOptions
+	Field Credentials:TEOSAuthCredentials
+	Field ScopeFlags:EEOSAuthScopeFlags = EEOSAuthScopeFlags.BasicProfile
+	Field LoginFlags:EEOSAuthLoginFlags
+End Type
+
+Type TEOSConnectCredentials
+	Field Token:String
+	Field Type:EEOSExternalCredentialType
+End Type
+
+Type TEOSConnectUserLoginInfo
+	Field DisplayName:String
+	Field NsaIdToken:String
+End Type
+
+Type TEOSConnectLoginOptions
+	Field Credentials:TEOSConnectCredentials
+	Field UserLoginInfo:TEOSConnectUserLoginInfo
+End Type
+
+Type TEOSAuthPinGrantInfo
+	Field UserCode:String
+	Field VerificationURI:String
+	Field ExpiresIn:Int
+	Field VerificationURIComplete:String
+End Type
+
+Rem
+bbdoc: A copied Epic Account Services authentication token.
+about: Access and refresh tokens are credentials. Do not log, commit, or store
+them without appropriate protection.
+End Rem
+Type TEOSAuthToken
+	Field App:String
+	Field ClientId:String
+	Field AccountId:TEOSEpicAccountId
+	Field AccessToken:String
+	Field ExpiresIn:Double
+	Field ExpiresAt:String
+	Field AuthType:EEOSAuthTokenType
+	Field RefreshToken:String
+	Field RefreshExpiresIn:Double
+	Field RefreshExpiresAt:String
+End Type
+
+Rem
+bbdoc: A copied Epic Account Services ID token suitable for Connect login.
+End Rem
+Type TEOSAuthIdToken
+	Field AccountId:TEOSEpicAccountId
+	Field JsonWebToken:String
+End Type
+
+Rem
+bbdoc: An opaque Auth follow-up token owned by EOS.
+about: It remains usable only while its originating platform is valid.
+End Rem
+Type TEOSAuthContinuanceToken
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSAuthContinuanceToken(handle:Byte Ptr, owner:TEOSPlatform)
+		If Not handle Or Not owner Then Return Null
+		Local token:TEOSAuthContinuanceToken = New TEOSAuthContinuanceToken
+		token._owner = owner
+		token._handle = handle
+		Return token
+	End Function
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+End Type
+
+Rem
+bbdoc: An opaque Connect follow-up token owned by EOS.
+about: It remains usable only while its originating platform is valid and
+cannot be substituted with an Auth continuance token.
+End Rem
+Type TEOSConnectContinuanceToken
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSConnectContinuanceToken(handle:Byte Ptr, owner:TEOSPlatform)
+		If Not handle Or Not owner Then Return Null
+		Local token:TEOSConnectContinuanceToken = New TEOSConnectContinuanceToken
+		token._owner = owner
+		token._handle = handle
+		Return token
+	End Function
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+End Type
+
+Interface IEOSAuthLoginListener
+	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
+End Interface
+
+Interface IEOSAuthLogoutListener
+	Method OnEOSAuthLogout(result:EEOSResult, localUserId:TEOSEpicAccountId)
+End Interface
+
+Interface IEOSConnectLoginListener
+	Method OnEOSConnectLogin(result:EEOSResult, localUserId:TEOSProductUserId, continuanceToken:TEOSConnectContinuanceToken)
+End Interface
+
+Interface IEOSConnectCreateUserListener
+	Method OnEOSConnectCreateUser(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSConnectLogoutListener
+	Method OnEOSConnectLogout(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
 
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -303,6 +533,7 @@ Type TEOSPlatform
 	Private
 	Field _handle:Byte Ptr
 
+	Public
 	Function _Create:TEOSPlatform(handle:Byte Ptr)
 		If Not handle Then Return Null
 		Local platform:TEOSPlatform = New TEOSPlatform
@@ -311,7 +542,10 @@ Type TEOSPlatform
 		Return platform
 	End Function
 
-	Public
+	Method _NativeHandle:Byte Ptr()
+		Return _handle
+	End Method
+
 	Rem
 	bbdoc: Creates a platform instance from developer-portal configuration.
 	End Rem
@@ -346,13 +580,30 @@ Type TEOSPlatform
 	End Method
 
 	Rem
+	bbdoc: Returns the Epic Account Services authentication interface.
+	End Rem
+	Method Auth:TEOSAuth()
+		If Not _handle Then Return Null
+		Return TEOSAuth._Create(Self, bmx_eos_platform_get_auth_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Connect interface.
+	End Rem
+	Method Connect:TEOSConnect()
+		If Not _handle Then Return Null
+		Return TEOSConnect._Create(Self, bmx_eos_platform_get_connect_interface(_handle))
+	End Method
+
+	Rem
 	bbdoc: Releases this platform. The operation is idempotent.
 	End Rem
 	Method Release()
 		If Not _handle Then Return
-		bmx_eos_platform_release(_handle)
+		Local handle:Byte Ptr = _handle
 		_handle = Null
 		_eosLivePlatforms :- 1
+		bmx_eos_platform_release(handle)
 	End Method
 
 	Method IsValid:Int()
@@ -371,6 +622,7 @@ Type TEOSEpicAccountId
 	Private
 	Field _handle:Byte Ptr
 
+	Public
 	Function _Create:TEOSEpicAccountId(handle:Byte Ptr)
 		If Not handle Then Return Null
 		Local accountId:TEOSEpicAccountId = New TEOSEpicAccountId
@@ -395,6 +647,10 @@ Type TEOSEpicAccountId
 		If Not _handle Then Return ""
 		Return bmx_eos_epic_account_id_to_string(_handle)
 	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		Return _handle
+	End Method
 End Type
 
 Rem
@@ -404,6 +660,7 @@ Type TEOSProductUserId
 	Private
 	Field _handle:Byte Ptr
 
+	Public
 	Function _Create:TEOSProductUserId(handle:Byte Ptr)
 		If Not handle Then Return Null
 		Local productUserId:TEOSProductUserId = New TEOSProductUserId
@@ -428,6 +685,356 @@ Type TEOSProductUserId
 		If Not _handle Then Return ""
 		Return bmx_eos_product_user_id_to_string(_handle)
 	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		Return _handle
+	End Method
+End Type
+
+Rem
+bbdoc: One pending Auth login operation.
+End Rem
+Type TEOSAuthLoginRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAuthLoginListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAuthLoginRequest(owner:TEOSPlatform, listener:IEOSAuthLoginListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSAuthLoginRequest = New TEOSAuthLoginRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAuthLoginRequest, result:EEOSResult, localUserHandle:Byte Ptr, userCode:String, verificationURI:String, expiresIn:Int, verificationURIComplete:String, continuanceHandle:Byte Ptr, selectedAccountHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSAuthLoginListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If Not listener Then Return
+
+		Local pinGrant:TEOSAuthPinGrantInfo
+		If userCode Or verificationURI Or verificationURIComplete Then
+			pinGrant = New TEOSAuthPinGrantInfo
+			pinGrant.UserCode = userCode
+			pinGrant.VerificationURI = verificationURI
+			pinGrant.ExpiresIn = expiresIn
+			pinGrant.VerificationURIComplete = verificationURIComplete
+		End If
+		listener.OnEOSAuthLogin(result, TEOSEpicAccountId._Create(localUserHandle), pinGrant, TEOSAuthContinuanceToken._Create(continuanceHandle, request._owner), TEOSEpicAccountId._Create(selectedAccountHandle))
+	End Function
+
+	Function _Cancel(request:TEOSAuthLoginRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, "", "", 0, "", Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSAuthLogoutRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAuthLogoutListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAuthLogoutRequest(owner:TEOSPlatform, listener:IEOSAuthLogoutListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSAuthLogoutRequest = New TEOSAuthLogoutRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAuthLogoutRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSAuthLogoutListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSAuthLogout(result, TEOSEpicAccountId._Create(localUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSAuthLogoutRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSConnectLoginRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSConnectLoginListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSConnectLoginRequest(owner:TEOSPlatform, listener:IEOSConnectLoginListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSConnectLoginRequest = New TEOSConnectLoginRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSConnectLoginRequest, result:EEOSResult, localUserHandle:Byte Ptr, continuanceHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSConnectLoginListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSConnectLogin(result, TEOSProductUserId._Create(localUserHandle), TEOSConnectContinuanceToken._Create(continuanceHandle, request._owner))
+	End Function
+
+	Function _Cancel(request:TEOSConnectLoginRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSConnectCreateUserRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSConnectCreateUserListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSConnectCreateUserRequest(owner:TEOSPlatform, listener:IEOSConnectCreateUserListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSConnectCreateUserRequest = New TEOSConnectCreateUserRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSConnectCreateUserRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSConnectCreateUserListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSConnectCreateUser(result, TEOSProductUserId._Create(localUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSConnectCreateUserRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSConnectLogoutRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSConnectLogoutListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSConnectLogoutRequest(owner:TEOSPlatform, listener:IEOSConnectLogoutListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSConnectLogoutRequest = New TEOSConnectLogoutRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSConnectLogoutRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSConnectLogoutListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSConnectLogout(result, TEOSProductUserId._Create(localUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSConnectLogoutRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Rem
+bbdoc: Epic Account Services authentication for one platform.
+End Rem
+Type TEOSAuth
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSAuth(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local auth:TEOSAuth = New TEOSAuth
+		auth._owner = owner
+		auth._handle = handle
+		Return auth
+	End Function
+
+	Rem
+	bbdoc: Starts an asynchronous Epic Account Services login.
+	about: Keep ticking the owning platform until the listener receives a
+	terminal result. The returned request reports that terminal state.
+	End Rem
+	Method Login:TEOSAuthLoginRequest(options:TEOSAuthLoginOptions, listener:IEOSAuthLoginListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.Credentials Or Not listener Then Return Null
+		Local request:TEOSAuthLoginRequest = TEOSAuthLoginRequest._Create(_owner, listener)
+		bmx_eos_auth_login(_owner._NativeHandle(), _handle, request, options.Credentials.Id, options.Credentials.Token, options.Credentials.Type, options.Credentials.ExternalType, options.ScopeFlags, options.LoginFlags)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Logs out one Epic Account asynchronously.
+	End Rem
+	Method Logout:TEOSAuthLogoutRequest(localUserId:TEOSEpicAccountId, listener:IEOSAuthLogoutListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId._NativeHandle() Or Not listener Then Return Null
+		Local request:TEOSAuthLogoutRequest = TEOSAuthLogoutRequest._Create(_owner, listener)
+		bmx_eos_auth_logout(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method LoggedInAccountsCount:Int()
+		If Not _owner Or Not _owner.IsValid() Then Return 0
+		Return bmx_eos_auth_get_logged_in_accounts_count(_handle)
+	End Method
+
+	Method LoggedInAccountByIndex:TEOSEpicAccountId(index:Int)
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return Null
+		Return TEOSEpicAccountId._Create(bmx_eos_auth_get_logged_in_account_by_index(_handle, index))
+	End Method
+
+	Rem
+	bbdoc: Copies the current authentication token for a logged-in account.
+	about: The returned token contains credentials and must be handled as secret.
+	End Rem
+	Method CopyUserAuthToken:EEOSResult(localUserId:TEOSEpicAccountId, token:TEOSAuthToken Var)
+		token = Null
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId._NativeHandle() Then Return EEOSResult.InvalidParameters
+
+		Local app:String, clientId:String, accountHandle:Byte Ptr, accessToken:String, expiresIn:Double, expiresAt:String
+		Local authType:EEOSAuthTokenType, refreshToken:String, refreshExpiresIn:Double, refreshExpiresAt:String
+		Local result:EEOSResult = bmx_eos_auth_copy_user_auth_token(_handle, localUserId._NativeHandle(), app, clientId, accountHandle, accessToken, expiresIn, expiresAt, authType, refreshToken, refreshExpiresIn, refreshExpiresAt)
+		If result <> EEOSResult.Success Then Return result
+
+		token = New TEOSAuthToken
+		token.App = app
+		token.ClientId = clientId
+		token.AccountId = TEOSEpicAccountId._Create(accountHandle)
+		token.AccessToken = accessToken
+		token.ExpiresIn = expiresIn
+		token.ExpiresAt = expiresAt
+		token.AuthType = authType
+		token.RefreshToken = refreshToken
+		token.RefreshExpiresIn = refreshExpiresIn
+		token.RefreshExpiresAt = refreshExpiresAt
+		Return result
+	End Method
+
+	Rem
+	bbdoc: Copies an Epic ID token for a logged-in account.
+	about: Passing this token to Connect with EpicIdToken credentials is the
+	recommended bridge from Epic Account Services to game services.
+	End Rem
+	Method CopyIdToken:EEOSResult(accountId:TEOSEpicAccountId, token:TEOSAuthIdToken Var)
+		token = Null
+		If Not _owner Or Not _owner.IsValid() Or Not accountId Or Not accountId._NativeHandle() Then Return EEOSResult.InvalidParameters
+
+		Local tokenAccountHandle:Byte Ptr
+		Local jsonWebToken:String
+		Local result:EEOSResult = bmx_eos_auth_copy_id_token(_handle, accountId._NativeHandle(), tokenAccountHandle, jsonWebToken)
+		If result <> EEOSResult.Success Then Return result
+
+		token = New TEOSAuthIdToken
+		token.AccountId = TEOSEpicAccountId._Create(tokenAccountHandle)
+		token.JsonWebToken = jsonWebToken
+		Return result
+	End Method
+End Type
+
+Rem
+bbdoc: EOS game-services identity login for one platform.
+End Rem
+Type TEOSConnect
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSConnect(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local connect:TEOSConnect = New TEOSConnect
+		connect._owner = owner
+		connect._handle = handle
+		Return connect
+	End Function
+
+	Rem
+	bbdoc: Starts an asynchronous game-services identity login.
+	about: A terminal InvalidUser result supplies a Connect continuance token
+	that may be passed to #CreateUser after explicit user consent.
+	End Rem
+	Method Login:TEOSConnectLoginRequest(options:TEOSConnectLoginOptions, listener:IEOSConnectLoginListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.Credentials Or Not listener Then Return Null
+		Local request:TEOSConnectLoginRequest = TEOSConnectLoginRequest._Create(_owner, listener)
+		Local useUserLoginInfo:Int = options.UserLoginInfo <> Null
+		Local displayName:String, nsaIdToken:String
+		If options.UserLoginInfo Then
+			displayName = options.UserLoginInfo.DisplayName
+			nsaIdToken = options.UserLoginInfo.NsaIdToken
+		End If
+		bmx_eos_connect_login(_owner._NativeHandle(), _handle, request, options.Credentials.Token, options.Credentials.Type, displayName, nsaIdToken, useUserLoginInfo)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Creates a Product User from a Connect InvalidUser continuance token.
+	End Rem
+	Method CreateUser:TEOSConnectCreateUserRequest(continuanceToken:TEOSConnectContinuanceToken, listener:IEOSConnectCreateUserListener)
+		If Not _owner Or Not _owner.IsValid() Or Not continuanceToken Or Not continuanceToken.IsValid() Or Not listener Then Return Null
+		Local request:TEOSConnectCreateUserRequest = TEOSConnectCreateUserRequest._Create(_owner, listener)
+		bmx_eos_connect_create_user(_owner._NativeHandle(), _handle, request, continuanceToken._NativeHandle())
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Logs out one Product User asynchronously.
+	End Rem
+	Method Logout:TEOSConnectLogoutRequest(localUserId:TEOSProductUserId, listener:IEOSConnectLogoutListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId._NativeHandle() Or Not listener Then Return Null
+		Local request:TEOSConnectLogoutRequest = TEOSConnectLogoutRequest._Create(_owner, listener)
+		bmx_eos_connect_logout(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method LoggedInUsersCount:Int()
+		If Not _owner Or Not _owner.IsValid() Then Return 0
+		Return bmx_eos_connect_get_logged_in_users_count(_handle)
+	End Method
+
+	Method LoggedInUserByIndex:TEOSProductUserId(index:Int)
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return Null
+		Return TEOSProductUserId._Create(bmx_eos_connect_get_logged_in_user_by_index(_handle, index))
+	End Method
 End Type
 
 Private
@@ -446,6 +1053,21 @@ Extern
 	Function bmx_eos_platform_create:Byte Ptr(productId:String, sandboxId:String, deploymentId:String, clientId:String, clientSecret:String, encryptionKey:String, overrideCountryCode:String, overrideLocaleCode:String, cacheDirectory:String, isServer:Int, flags:EEOSPlatformFlags, tickBudgetInMilliseconds:UInt, useTaskNetworkTimeout:Int, taskNetworkTimeoutSeconds:Double)
 	Function bmx_eos_platform_tick(handle:Byte Ptr)
 	Function bmx_eos_platform_release(handle:Byte Ptr)
+	Function bmx_eos_platform_get_auth_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_connect_interface:Byte Ptr(handle:Byte Ptr)
+
+	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
+	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_auth_get_logged_in_accounts_count:Int(authHandle:Byte Ptr)
+	Function bmx_eos_auth_get_logged_in_account_by_index:Byte Ptr(authHandle:Byte Ptr, index:Int)
+	Function bmx_eos_auth_copy_user_auth_token:EEOSResult(authHandle:Byte Ptr, localUserHandle:Byte Ptr, app:String Var, clientId:String Var, accountHandle:Byte Ptr Var, accessToken:String Var, expiresIn:Double Var, expiresAt:String Var, authType:EEOSAuthTokenType Var, refreshToken:String Var, refreshExpiresIn:Double Var, refreshExpiresAt:String Var)
+	Function bmx_eos_auth_copy_id_token:EEOSResult(authHandle:Byte Ptr, accountHandle:Byte Ptr, tokenAccountHandle:Byte Ptr Var, jsonWebToken:String Var)
+
+	Function bmx_eos_connect_login(platformHandle:Byte Ptr, connectHandle:Byte Ptr, request:TEOSConnectLoginRequest, token:String, credentialType:EEOSExternalCredentialType, displayName:String, nsaIdToken:String, useUserLoginInfo:Int)
+	Function bmx_eos_connect_create_user(platformHandle:Byte Ptr, connectHandle:Byte Ptr, request:TEOSConnectCreateUserRequest, continuanceHandle:Byte Ptr)
+	Function bmx_eos_connect_logout(platformHandle:Byte Ptr, connectHandle:Byte Ptr, request:TEOSConnectLogoutRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_connect_get_logged_in_users_count:Int(connectHandle:Byte Ptr)
+	Function bmx_eos_connect_get_logged_in_user_by_index:Byte Ptr(connectHandle:Byte Ptr, index:Int)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

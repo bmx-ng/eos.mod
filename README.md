@@ -10,7 +10,9 @@ The current foundation covers:
 - platform creation, release, and explicit main-thread ticking
 - SDK logging and result helpers
 - Epic Account ID and Product User ID wrappers
-- a documented ownership model for future asynchronous callbacks
+- Auth login/logout, account enumeration, and auth-token copying
+- Connect login/logout, Product User enumeration, and explicit user creation
+- retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
 [`SDK_SETUP.md`](SDK_SETUP.md) for the expected SDK version and layout.
@@ -43,11 +45,17 @@ Do not commit client secrets, encryption keys, exchange codes, access tokens,
 or other developer-portal credentials. Load them from an ignored local config
 file or the process environment.
 
+The [`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) example demonstrates
+the Developer Authentication Tool flow. Copy its
+[`eos.local.conf.example`](sdk.mod/examples/eos.local.conf.example) to the
+ignored `eos.local.conf`, supply your portal values, and run the example from
+that directory. New Product User creation is an explicit opt-in in the config.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
 
-1. Auth and Connect
+1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
 2. Achievements, Stats, and Leaderboards
 3. Friends, Presence, and User Info
 4. Lobbies and Sessions

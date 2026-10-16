@@ -8,3 +8,11 @@ The Epic SDK is a separate download and is not redistributed with this module.
 Developer-portal product configuration and credentials must be supplied at
 runtime and must not be committed to source control.
 
+Platform.Auth() exposes Epic Account Services login and token operations.
+Platform.Connect() exposes game-services identity login and Product User
+creation. Both use retained request objects and listeners; call Platform.Tick()
+until a terminal result is delivered. Releasing the platform cancels any
+remaining requests before the native handle is released.
+
+See examples/auth_connect.bmx for a Developer Authentication Tool flow that
+continues from Auth to Connect using the recommended Epic ID token.
