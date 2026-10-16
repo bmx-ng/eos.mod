@@ -13,6 +13,7 @@ The current foundation covers:
 - Auth login/logout, account enumeration, and auth-token copying
 - Connect login/logout, Product User enumeration, and explicit user creation
 - Stats ingest and query, with copied access to cached stat results
+- Achievement definition and player-progress queries with managed cached copies
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -65,12 +66,16 @@ your ignored local configuration; the named stat must already exist in the EOS
 Developer Portal. A successful ingest callback means the request reached EOS,
 but backend processing and achievement updates can take additional time.
 
+The [`achievements.bmx`](sdk.mod/examples/achievements.bmx) example queries the
+configured achievement definitions and the signed-in Product User's progress.
+The deployment and client policy must permit the corresponding read actions.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
 
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
-2. Achievements, Stats, and Leaderboards (Stats core implemented)
+2. Achievements, Stats, and Leaderboards (Stats and Achievements read paths implemented)
 3. Friends, Presence, and User Info
 4. Lobbies and Sessions
 5. P2P

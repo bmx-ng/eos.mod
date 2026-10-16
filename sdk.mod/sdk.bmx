@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.3.0"
+ModuleInfo "Version: 0.4.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -21,6 +21,8 @@ ModuleInfo "History: 0.2.0"
 ModuleInfo "History: Added Auth and Connect login, logout, token, enumeration, and user creation foundations."
 ModuleInfo "History: 0.3.0"
 ModuleInfo "History: Added Stats ingest, query, and cached-result access."
+ModuleInfo "History: 0.4.0"
+ModuleInfo "History: Added Achievement definition and player-progress queries."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -50,6 +52,7 @@ Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
 Const EOS_STATS_MAX_INGEST_STATS:Int = 3000
 Const EOS_STATS_MAX_QUERY_STATS:Int = 1000
 Const EOS_STATS_TIME_UNDEFINED:Long = -1
+Const EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED:Long = -1
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -338,6 +341,50 @@ Type TEOSStat
 	Field Value:Int
 End Type
 
+Type TEOSAchievementsQueryDefinitionsOptions
+	Field LocalUserId:TEOSProductUserId
+End Type
+
+Type TEOSAchievementsQueryPlayerOptions
+	Field LocalUserId:TEOSProductUserId
+	Field TargetUserId:TEOSProductUserId
+End Type
+
+Type TEOSAchievementStatThreshold
+	Field Name:String
+	Field Threshold:Int
+End Type
+
+Type TEOSAchievementDefinition
+	Field AchievementId:String
+	Field UnlockedDisplayName:String
+	Field UnlockedDescription:String
+	Field LockedDisplayName:String
+	Field LockedDescription:String
+	Field FlavorText:String
+	Field UnlockedIconURL:String
+	Field LockedIconURL:String
+	Field IsHidden:Int
+	Field StatThresholds:TEOSAchievementStatThreshold[]
+End Type
+
+Type TEOSPlayerAchievementStatInfo
+	Field Name:String
+	Field CurrentValue:Int
+	Field ThresholdValue:Int
+End Type
+
+Type TEOSPlayerAchievement
+	Field AchievementId:String
+	Field Progress:Double
+	Field UnlockTime:Long = EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED
+	Field DisplayName:String
+	Field Description:String
+	Field IconURL:String
+	Field FlavorText:String
+	Field StatInfo:TEOSPlayerAchievementStatInfo[]
+End Type
+
 Type TEOSAuthPinGrantInfo
 	Field UserCode:String
 	Field VerificationURI:String
@@ -454,6 +501,14 @@ End Interface
 
 Interface IEOSStatsQueryListener
 	Method OnEOSStatsQuery(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSAchievementsQueryDefinitionsListener
+	Method OnEOSAchievementsQueryDefinitions(result:EEOSResult)
+End Interface
+
+Interface IEOSAchievementsQueryPlayerListener
+	Method OnEOSAchievementsQueryPlayer(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
 End Interface
 
 Interface IEOSLogListener
@@ -643,6 +698,14 @@ Type TEOSPlatform
 	Method Stats:TEOSStats()
 		If Not _handle Then Return Null
 		Return TEOSStats._Create(Self, bmx_eos_platform_get_stats_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Achievements interface.
+	End Rem
+	Method Achievements:TEOSAchievements()
+		If Not _handle Then Return Null
+		Return TEOSAchievements._Create(Self, bmx_eos_platform_get_achievements_interface(_handle))
 	End Method
 
 	Rem
@@ -992,6 +1055,68 @@ Type TEOSStatsQueryRequest
 	End Method
 End Type
 
+Type TEOSAchievementsQueryDefinitionsRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAchievementsQueryDefinitionsListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAchievementsQueryDefinitionsRequest(owner:TEOSPlatform, listener:IEOSAchievementsQueryDefinitionsListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSAchievementsQueryDefinitionsRequest = New TEOSAchievementsQueryDefinitionsRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAchievementsQueryDefinitionsRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSAchievementsQueryDefinitionsListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSAchievementsQueryDefinitions(result)
+	End Function
+
+	Function _Cancel(request:TEOSAchievementsQueryDefinitionsRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSAchievementsQueryPlayerRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAchievementsQueryPlayerListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAchievementsQueryPlayerRequest(owner:TEOSPlatform, listener:IEOSAchievementsQueryPlayerListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSAchievementsQueryPlayerRequest = New TEOSAchievementsQueryPlayerRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAchievementsQueryPlayerRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSAchievementsQueryPlayerListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSAchievementsQueryPlayer(result, TEOSProductUserId._Create(localUserHandle), TEOSProductUserId._Create(targetUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSAchievementsQueryPlayerRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1255,6 +1380,132 @@ Type TEOSStats
 	End Method
 End Type
 
+Rem
+bbdoc: EOS game-services Achievements interface for one platform.
+End Rem
+Type TEOSAchievements
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Function _Definition:TEOSAchievementDefinition(achievementId:String, unlockedName:String, unlockedDescription:String, lockedName:String, lockedDescription:String, flavorText:String, unlockedIcon:String, lockedIcon:String, isHidden:Int, statNames:String[], thresholds:Int[])
+		Local definition:TEOSAchievementDefinition = New TEOSAchievementDefinition
+		definition.AchievementId = achievementId
+		definition.UnlockedDisplayName = unlockedName
+		definition.UnlockedDescription = unlockedDescription
+		definition.LockedDisplayName = lockedName
+		definition.LockedDescription = lockedDescription
+		definition.FlavorText = flavorText
+		definition.UnlockedIconURL = unlockedIcon
+		definition.LockedIconURL = lockedIcon
+		definition.IsHidden = isHidden
+		definition.StatThresholds = New TEOSAchievementStatThreshold[statNames.Length]
+		For Local index:Int = 0 Until statNames.Length
+			definition.StatThresholds[index] = New TEOSAchievementStatThreshold
+			definition.StatThresholds[index].Name = statNames[index]
+			definition.StatThresholds[index].Threshold = thresholds[index]
+		Next
+		Return definition
+	End Function
+
+	Function _Player:TEOSPlayerAchievement(achievementId:String, progress:Double, unlockTime:Long, displayName:String, description:String, iconUrl:String, flavorText:String, statNames:String[], currentValues:Int[], thresholdValues:Int[])
+		Local achievement:TEOSPlayerAchievement = New TEOSPlayerAchievement
+		achievement.AchievementId = achievementId
+		achievement.Progress = progress
+		achievement.UnlockTime = unlockTime
+		achievement.DisplayName = displayName
+		achievement.Description = description
+		achievement.IconURL = iconUrl
+		achievement.FlavorText = flavorText
+		achievement.StatInfo = New TEOSPlayerAchievementStatInfo[statNames.Length]
+		For Local index:Int = 0 Until statNames.Length
+			achievement.StatInfo[index] = New TEOSPlayerAchievementStatInfo
+			achievement.StatInfo[index].Name = statNames[index]
+			achievement.StatInfo[index].CurrentValue = currentValues[index]
+			achievement.StatInfo[index].ThresholdValue = thresholdValues[index]
+		Next
+		Return achievement
+	End Function
+
+	Public
+	Function _Create:TEOSAchievements(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local achievements:TEOSAchievements = New TEOSAchievements
+		achievements._owner = owner
+		achievements._handle = handle
+		Return achievements
+	End Function
+
+	Method QueryDefinitions:TEOSAchievementsQueryDefinitionsRequest(options:TEOSAchievementsQueryDefinitionsOptions, listener:IEOSAchievementsQueryDefinitionsListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		Local localUserHandle:Byte Ptr
+		If options.LocalUserId Then localUserHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSAchievementsQueryDefinitionsRequest = TEOSAchievementsQueryDefinitionsRequest._Create(_owner, listener)
+		bmx_eos_achievements_query_definitions(_owner._NativeHandle(), _handle, request, localUserHandle)
+		Return request
+	End Method
+
+	Method QueryPlayerAchievements:TEOSAchievementsQueryPlayerRequest(options:TEOSAchievementsQueryPlayerOptions, listener:IEOSAchievementsQueryPlayerListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		If Not options.TargetUserId Or Not options.TargetUserId.IsValid() Then Return Null
+		Local localUserHandle:Byte Ptr
+		If options.LocalUserId Then localUserHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSAchievementsQueryPlayerRequest = TEOSAchievementsQueryPlayerRequest._Create(_owner, listener)
+		bmx_eos_achievements_query_player(_owner._NativeHandle(), _handle, request, localUserHandle, options.TargetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method DefinitionCount:Int()
+		If Not _owner Or Not _owner.IsValid() Then Return 0
+		Return bmx_eos_achievements_definition_count(_handle)
+	End Method
+
+	Method CopyDefinitionByIndex:EEOSResult(index:Int, definition:TEOSAchievementDefinition Var)
+		definition = Null
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local id:String, un:String, ud:String, ln:String, ld:String, flavor:String, ui:String, li:String, hidden:Int, names:String[], values:Int[]
+		Local result:EEOSResult = bmx_eos_achievements_copy_definition_by_index(_handle, UInt(index), id, un, ud, ln, ld, flavor, ui, li, hidden, names, values)
+		If result = EEOSResult.Success Then definition = _Definition(id, un, ud, ln, ld, flavor, ui, li, hidden, names, values)
+		Return result
+	End Method
+
+	Method CopyDefinitionById:EEOSResult(achievementId:String, definition:TEOSAchievementDefinition Var)
+		definition = Null
+		If Not _owner Or Not _owner.IsValid() Or Not achievementId Then Return EEOSResult.InvalidParameters
+		Local id:String, un:String, ud:String, ln:String, ld:String, flavor:String, ui:String, li:String, hidden:Int, names:String[], values:Int[]
+		Local result:EEOSResult = bmx_eos_achievements_copy_definition_by_id(_handle, achievementId, id, un, ud, ln, ld, flavor, ui, li, hidden, names, values)
+		If result = EEOSResult.Success Then definition = _Definition(id, un, ud, ln, ld, flavor, ui, li, hidden, names, values)
+		Return result
+	End Method
+
+	Method PlayerAchievementCount:Int(targetUserId:TEOSProductUserId)
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return 0
+		Return bmx_eos_achievements_player_count(_handle, targetUserId._NativeHandle())
+	End Method
+
+	Method CopyPlayerAchievementByIndex:EEOSResult(localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId, index:Int, achievement:TEOSPlayerAchievement Var)
+		achievement = Null
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local localHandle:Byte Ptr
+		If localUserId Then localHandle = localUserId._NativeHandle()
+		Local id:String, progress:Double, unlockTime:Long, displayName:String, description:String, icon:String, flavor:String, names:String[], current:Int[], thresholds:Int[]
+		Local result:EEOSResult = bmx_eos_achievements_copy_player_by_index(_handle, localHandle, targetUserId._NativeHandle(), UInt(index), id, progress, unlockTime, displayName, description, icon, flavor, names, current, thresholds)
+		If result = EEOSResult.Success Then achievement = _Player(id, progress, unlockTime, displayName, description, icon, flavor, names, current, thresholds)
+		Return result
+	End Method
+
+	Method CopyPlayerAchievementById:EEOSResult(localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId, achievementId:String, achievement:TEOSPlayerAchievement Var)
+		achievement = Null
+		If Not _owner Or Not _owner.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Or Not achievementId Then Return EEOSResult.InvalidParameters
+		Local localHandle:Byte Ptr
+		If localUserId Then localHandle = localUserId._NativeHandle()
+		Local id:String, progress:Double, unlockTime:Long, displayName:String, description:String, icon:String, flavor:String, names:String[], current:Int[], thresholds:Int[]
+		Local result:EEOSResult = bmx_eos_achievements_copy_player_by_id(_handle, localHandle, targetUserId._NativeHandle(), achievementId, id, progress, unlockTime, displayName, description, icon, flavor, names, current, thresholds)
+		If result = EEOSResult.Success Then achievement = _Player(id, progress, unlockTime, displayName, description, icon, flavor, names, current, thresholds)
+		Return result
+	End Method
+End Type
+
 Private
 
 Extern
@@ -1274,6 +1525,7 @@ Extern
 	Function bmx_eos_platform_get_auth_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_connect_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_stats_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_achievements_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -1293,6 +1545,15 @@ Extern
 	Function bmx_eos_stats_get_count:Int(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_stats_copy_by_index:EEOSResult(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, name:String Var, startTime:Long Var, endTime:Long Var, value:Int Var)
 	Function bmx_eos_stats_copy_by_name:EEOSResult(statsHandle:Byte Ptr, targetUserHandle:Byte Ptr, statName:String, name:String Var, startTime:Long Var, endTime:Long Var, value:Int Var)
+
+	Function bmx_eos_achievements_query_definitions(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, request:TEOSAchievementsQueryDefinitionsRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_achievements_query_player(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, request:TEOSAchievementsQueryPlayerRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_achievements_definition_count:Int(achievementsHandle:Byte Ptr)
+	Function bmx_eos_achievements_copy_definition_by_index:EEOSResult(achievementsHandle:Byte Ptr, index:UInt, achievementId:String Var, unlockedName:String Var, unlockedDescription:String Var, lockedName:String Var, lockedDescription:String Var, flavorText:String Var, unlockedIcon:String Var, lockedIcon:String Var, isHidden:Int Var, statNames:String[] Var, thresholds:Int[] Var)
+	Function bmx_eos_achievements_copy_definition_by_id:EEOSResult(achievementsHandle:Byte Ptr, requestedId:String, achievementId:String Var, unlockedName:String Var, unlockedDescription:String Var, lockedName:String Var, lockedDescription:String Var, flavorText:String Var, unlockedIcon:String Var, lockedIcon:String Var, isHidden:Int Var, statNames:String[] Var, thresholds:Int[] Var)
+	Function bmx_eos_achievements_player_count:Int(achievementsHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_achievements_copy_player_by_index:EEOSResult(achievementsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, achievementId:String Var, progress:Double Var, unlockTime:Long Var, displayName:String Var, description:String Var, iconUrl:String Var, flavorText:String Var, statNames:String[] Var, currentValues:Int[] Var, thresholdValues:Int[] Var)
+	Function bmx_eos_achievements_copy_player_by_id:EEOSResult(achievementsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedId:String, achievementId:String Var, progress:Double Var, unlockTime:Long Var, displayName:String Var, description:String Var, iconUrl:String Var, flavorText:String Var, statNames:String[] Var, currentValues:Int[] Var, thresholdValues:Int[] Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

@@ -19,10 +19,15 @@ the SDK's local cache; use StatsCount(), CopyStatByIndex(), or CopyStatByName()
 to copy managed values from it. Leave the query's StatNames array empty to
 request all stats, and use EOS_STATS_TIME_UNDEFINED for an open time range.
 
+Platform.Achievements() queries localized definitions and player progress into
+the SDK cache. Its copy methods return independent BlitzMax objects, including
+stat thresholds and current player stat information.
+
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.
 See examples/stats.bmx for an Auth-to-Connect flow that ingests and queries a
 stat configured in the Developer Portal.
+See examples/achievements.bmx for definition and player-progress queries.
 
 On macOS, build interactive Auth clients as GUI application bundles. The
 tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,

@@ -3,6 +3,7 @@
 #include <brl.mod/blitz.mod/blitz.h>
 
 #include "../SDK/Include/eos_sdk.h"
+#include "../SDK/Include/eos_achievements.h"
 #include "../SDK/Include/eos_auth.h"
 #include "../SDK/Include/eos_connect.h"
 #include "../SDK/Include/eos_logging.h"
@@ -33,6 +34,10 @@ void eos_sdk_TEOSStatsIngestRequest__Complete(BBObject *, EOS_EResult, EOS_Produ
 void eos_sdk_TEOSStatsIngestRequest__Cancel(BBObject *);
 void eos_sdk_TEOSStatsQueryRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ProductUserId);
 void eos_sdk_TEOSStatsQueryRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Complete(BBObject *, EOS_EResult);
+void eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAchievementsQueryPlayerRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSAchievementsQueryPlayerRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -55,7 +60,9 @@ enum class RequestKind {
 	ConnectCreateUser,
 	ConnectLogout,
 	StatsIngest,
-	StatsQuery
+	StatsQuery,
+	AchievementsQueryDefinitions,
+	AchievementsQueryPlayer
 };
 
 struct RequestContext {
@@ -119,6 +126,12 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 		case RequestKind::StatsQuery:
 			eos_sdk_TEOSStatsQueryRequest__Cancel(context->request);
 			break;
+		case RequestKind::AchievementsQueryDefinitions:
+			eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Cancel(context->request);
+			break;
+		case RequestKind::AchievementsQueryPlayer:
+			eos_sdk_TEOSAchievementsQueryPlayerRequest__Cancel(context->request);
+			break;
 		}
 		delete context;
 	}
@@ -178,6 +191,20 @@ private:
 
 BBString *ToBBString(const char *value) {
 	return bbStringFromUTF8String(reinterpret_cast<const unsigned char *>(value ? value : ""));
+}
+
+BBArray *StringArray(const std::vector<const char *> &values) {
+	BBArray *array = bbArrayNew1D("$", static_cast<int>(values.size()));
+	BBString **data = static_cast<BBString **>(BBARRAYDATA(array, array->dims));
+	for (std::size_t index = 0; index < values.size(); ++index) data[index] = ToBBString(values[index]);
+	return array;
+}
+
+BBArray *IntArray(const std::vector<int> &values) {
+	BBArray *array = bbArrayNew1D("i", static_cast<int>(values.size()));
+	int *data = static_cast<int *>(BBARRAYDATA(array, array->dims));
+	for (std::size_t index = 0; index < values.size(); ++index) data[index] = values[index];
+	return array;
 }
 
 void EOS_CALL LogCallback(const EOS_LogMessage *message) {
@@ -279,6 +306,25 @@ void EOS_CALL StatsQueryCallback(const EOS_Stats_OnQueryStatsCompleteCallbackInf
 	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSStatsQueryRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL AchievementsQueryDefinitionsCallback(const EOS_Achievements_OnQueryDefinitionsCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Complete(context->request, data->ResultCode);
+	if (terminal) delete context;
+}
+
+void EOS_CALL AchievementsQueryPlayerCallback(const EOS_Achievements_OnQueryPlayerAchievementsCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSAchievementsQueryPlayerRequest__Complete(context->request, data->ResultCode,
 		data->LocalUserId, data->TargetUserId);
 	if (terminal) delete context;
 }
@@ -420,6 +466,10 @@ EOS_HConnect bmx_eos_platform_get_connect_interface(EOS_HPlatform handle) {
 
 EOS_HStats bmx_eos_platform_get_stats_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetStatsInterface(handle) : nullptr;
+}
+
+EOS_HAchievements bmx_eos_platform_get_achievements_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetAchievementsInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -629,6 +679,156 @@ EOS_EResult bmx_eos_stats_copy_by_name(EOS_HStats stats, EOS_ProductUserId targe
 	EOS_Stats_Stat *stat = nullptr;
 	EOS_EResult result = EOS_Stats_CopyStatByName(stats, &options, &stat);
 	return CopyStat(stat, name, startTime, endTime, value, result);
+}
+
+void bmx_eos_achievements_query_definitions(EOS_HPlatform platform, EOS_HAchievements achievements,
+	BBObject *request, EOS_ProductUserId localUserId) {
+	EOS_Achievements_QueryDefinitionsOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_QUERYDEFINITIONS_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::AchievementsQueryDefinitions);
+	EOS_Achievements_QueryDefinitions(achievements, &options, context, AchievementsQueryDefinitionsCallback);
+}
+
+void bmx_eos_achievements_query_player(EOS_HPlatform platform, EOS_HAchievements achievements,
+	BBObject *request, EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId) {
+	EOS_Achievements_QueryPlayerAchievementsOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_QUERYPLAYERACHIEVEMENTS_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::AchievementsQueryPlayer);
+	EOS_Achievements_QueryPlayerAchievements(achievements, &options, context, AchievementsQueryPlayerCallback);
+}
+
+int bmx_eos_achievements_definition_count(EOS_HAchievements achievements) {
+	EOS_Achievements_GetAchievementDefinitionCountOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_GETACHIEVEMENTDEFINITIONCOUNT_API_LATEST;
+	return static_cast<int>(EOS_Achievements_GetAchievementDefinitionCount(achievements, &options));
+}
+
+static EOS_EResult CopyAchievementDefinition(EOS_Achievements_DefinitionV2 *definition,
+	BBString **achievementId, BBString **unlockedDisplayName, BBString **unlockedDescription,
+	BBString **lockedDisplayName, BBString **lockedDescription, BBString **flavorText,
+	BBString **unlockedIconUrl, BBString **lockedIconUrl, int *isHidden,
+	BBArray **statNames, BBArray **thresholds, EOS_EResult result) {
+	if (result != EOS_EResult::EOS_Success || !definition) return result;
+	*achievementId = ToBBString(definition->AchievementId);
+	*unlockedDisplayName = ToBBString(definition->UnlockedDisplayName);
+	*unlockedDescription = ToBBString(definition->UnlockedDescription);
+	*lockedDisplayName = ToBBString(definition->LockedDisplayName);
+	*lockedDescription = ToBBString(definition->LockedDescription);
+	*flavorText = ToBBString(definition->FlavorText);
+	*unlockedIconUrl = ToBBString(definition->UnlockedIconURL);
+	*lockedIconUrl = ToBBString(definition->LockedIconURL);
+	*isHidden = definition->bIsHidden;
+	std::vector<const char *> names;
+	std::vector<int> values;
+	for (uint32_t index = 0; index < definition->StatThresholdsCount; ++index) {
+		names.push_back(definition->StatThresholds[index].Name);
+		values.push_back(definition->StatThresholds[index].Threshold);
+	}
+	*statNames = StringArray(names);
+	*thresholds = IntArray(values);
+	EOS_Achievements_DefinitionV2_Release(definition);
+	return result;
+}
+
+EOS_EResult bmx_eos_achievements_copy_definition_by_index(EOS_HAchievements achievements, unsigned int index,
+	BBString **achievementId, BBString **unlockedDisplayName, BBString **unlockedDescription,
+	BBString **lockedDisplayName, BBString **lockedDescription, BBString **flavorText,
+	BBString **unlockedIconUrl, BBString **lockedIconUrl, int *isHidden,
+	BBArray **statNames, BBArray **thresholds) {
+	EOS_Achievements_CopyAchievementDefinitionV2ByIndexOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_COPYACHIEVEMENTDEFINITIONV2BYINDEX_API_LATEST;
+	options.AchievementIndex = index;
+	EOS_Achievements_DefinitionV2 *definition = nullptr;
+	EOS_EResult result = EOS_Achievements_CopyAchievementDefinitionV2ByIndex(achievements, &options, &definition);
+	return CopyAchievementDefinition(definition, achievementId, unlockedDisplayName, unlockedDescription,
+		lockedDisplayName, lockedDescription, flavorText, unlockedIconUrl, lockedIconUrl, isHidden,
+		statNames, thresholds, result);
+}
+
+EOS_EResult bmx_eos_achievements_copy_definition_by_id(EOS_HAchievements achievements, BBString *maxId,
+	BBString **achievementId, BBString **unlockedDisplayName, BBString **unlockedDescription,
+	BBString **lockedDisplayName, BBString **lockedDescription, BBString **flavorText,
+	BBString **unlockedIconUrl, BBString **lockedIconUrl, int *isHidden,
+	BBArray **statNames, BBArray **thresholds) {
+	UTF8String id(maxId);
+	EOS_Achievements_CopyAchievementDefinitionV2ByAchievementIdOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_COPYACHIEVEMENTDEFINITIONV2BYACHIEVEMENTID_API_LATEST;
+	options.AchievementId = id.required();
+	EOS_Achievements_DefinitionV2 *definition = nullptr;
+	EOS_EResult result = EOS_Achievements_CopyAchievementDefinitionV2ByAchievementId(achievements, &options, &definition);
+	return CopyAchievementDefinition(definition, achievementId, unlockedDisplayName, unlockedDescription,
+		lockedDisplayName, lockedDescription, flavorText, unlockedIconUrl, lockedIconUrl, isHidden,
+		statNames, thresholds, result);
+}
+
+int bmx_eos_achievements_player_count(EOS_HAchievements achievements, EOS_ProductUserId targetUserId) {
+	EOS_Achievements_GetPlayerAchievementCountOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_GETPLAYERACHIEVEMENTCOUNT_API_LATEST;
+	options.UserId = targetUserId;
+	return static_cast<int>(EOS_Achievements_GetPlayerAchievementCount(achievements, &options));
+}
+
+static EOS_EResult CopyPlayerAchievement(EOS_Achievements_PlayerAchievement *achievement,
+	BBString **achievementId, double *progress, int64_t *unlockTime, BBString **displayName,
+	BBString **description, BBString **iconUrl, BBString **flavorText, BBArray **statNames,
+	BBArray **currentValues, BBArray **thresholdValues, EOS_EResult result) {
+	if (result != EOS_EResult::EOS_Success || !achievement) return result;
+	*achievementId = ToBBString(achievement->AchievementId);
+	*progress = achievement->Progress;
+	*unlockTime = achievement->UnlockTime;
+	*displayName = ToBBString(achievement->DisplayName);
+	*description = ToBBString(achievement->Description);
+	*iconUrl = ToBBString(achievement->IconURL);
+	*flavorText = ToBBString(achievement->FlavorText);
+	std::vector<const char *> names;
+	std::vector<int> current;
+	std::vector<int> thresholds;
+	for (int32_t index = 0; index < achievement->StatInfoCount; ++index) {
+		names.push_back(achievement->StatInfo[index].Name);
+		current.push_back(achievement->StatInfo[index].CurrentValue);
+		thresholds.push_back(achievement->StatInfo[index].ThresholdValue);
+	}
+	*statNames = StringArray(names);
+	*currentValues = IntArray(current);
+	*thresholdValues = IntArray(thresholds);
+	EOS_Achievements_PlayerAchievement_Release(achievement);
+	return result;
+}
+
+EOS_EResult bmx_eos_achievements_copy_player_by_index(EOS_HAchievements achievements,
+	EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId, unsigned int index,
+	BBString **achievementId, double *progress, int64_t *unlockTime, BBString **displayName,
+	BBString **description, BBString **iconUrl, BBString **flavorText, BBArray **statNames,
+	BBArray **currentValues, BBArray **thresholdValues) {
+	EOS_Achievements_CopyPlayerAchievementByIndexOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_COPYPLAYERACHIEVEMENTBYINDEX_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.AchievementIndex = index;
+	EOS_Achievements_PlayerAchievement *achievement = nullptr;
+	EOS_EResult result = EOS_Achievements_CopyPlayerAchievementByIndex(achievements, &options, &achievement);
+	return CopyPlayerAchievement(achievement, achievementId, progress, unlockTime, displayName,
+		description, iconUrl, flavorText, statNames, currentValues, thresholdValues, result);
+}
+
+EOS_EResult bmx_eos_achievements_copy_player_by_id(EOS_HAchievements achievements,
+	EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId, BBString *maxId,
+	BBString **achievementId, double *progress, int64_t *unlockTime, BBString **displayName,
+	BBString **description, BBString **iconUrl, BBString **flavorText, BBArray **statNames,
+	BBArray **currentValues, BBArray **thresholdValues) {
+	UTF8String id(maxId);
+	EOS_Achievements_CopyPlayerAchievementByAchievementIdOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_COPYPLAYERACHIEVEMENTBYACHIEVEMENTID_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.AchievementId = id.required();
+	EOS_Achievements_PlayerAchievement *achievement = nullptr;
+	EOS_EResult result = EOS_Achievements_CopyPlayerAchievementByAchievementId(achievements, &options, &achievement);
+	return CopyPlayerAchievement(achievement, achievementId, progress, unlockTime, displayName,
+		description, iconUrl, flavorText, statNames, currentValues, thresholdValues, result);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {
