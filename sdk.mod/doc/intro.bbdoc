@@ -26,11 +26,15 @@ Explicit unlock operations are asynchronous. Unlock notification subscriptions
 must be removed when no longer needed; platform release removes any remaining
 subscriptions automatically.
 
+Platform.Leaderboards() queries deployment definitions and ranked records into
+the SDK cache. Copied definitions and records are independent managed values.
+
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.
 See examples/stats.bmx for an Auth-to-Connect flow that ingests and queries a
 stat configured in the Developer Portal.
 See examples/achievements.bmx for definition and player-progress queries.
+See examples/leaderboards.bmx for definition and ranked-record queries.
 
 On macOS, build interactive Auth clients as GUI application bundles. The
 tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,

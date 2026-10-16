@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.5.0"
+ModuleInfo "Version: 0.6.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -25,6 +25,8 @@ ModuleInfo "History: 0.4.0"
 ModuleInfo "History: Added Achievement definition and player-progress queries."
 ModuleInfo "History: 0.5.0"
 ModuleInfo "History: Added achievement unlocking and unlock notifications."
+ModuleInfo "History: 0.6.0"
+ModuleInfo "History: Added leaderboard definition and rank queries."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -55,6 +57,7 @@ Const EOS_STATS_MAX_INGEST_STATS:Int = 3000
 Const EOS_STATS_MAX_QUERY_STATS:Int = 1000
 Const EOS_STATS_TIME_UNDEFINED:Long = -1
 Const EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED:Long = -1
+Const EOS_LEADERBOARDS_TIME_UNDEFINED:Long = -1
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -256,6 +259,13 @@ Enum EEOSAuthTokenType
 	User = 1
 End Enum
 
+Enum EEOSLeaderboardAggregation
+	Minimum = 0
+	Maximum = 1
+	Sum = 2
+	Latest = 3
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -385,6 +395,27 @@ Type TEOSPlayerAchievement
 	Field IconURL:String
 	Field FlavorText:String
 	Field StatInfo:TEOSPlayerAchievementStatInfo[]
+End Type
+
+Type TEOSLeaderboardsQueryDefinitionsOptions
+	Field LocalUserId:TEOSProductUserId
+	Field StartTime:Long = EOS_LEADERBOARDS_TIME_UNDEFINED
+	Field EndTime:Long = EOS_LEADERBOARDS_TIME_UNDEFINED
+End Type
+
+Type TEOSLeaderboardDefinition
+	Field LeaderboardId:String
+	Field StatName:String
+	Field Aggregation:EEOSLeaderboardAggregation
+	Field StartTime:Long
+	Field EndTime:Long
+End Type
+
+Type TEOSLeaderboardRecord
+	Field UserId:TEOSProductUserId
+	Field Rank:UInt
+	Field Score:Int
+	Field UserDisplayName:String
 End Type
 
 Type TEOSAuthPinGrantInfo
@@ -519,6 +550,14 @@ End Interface
 
 Interface IEOSAchievementsUnlockedListener
 	Method OnEOSAchievementUnlocked(userId:TEOSProductUserId, achievementId:String, unlockTime:Long)
+End Interface
+
+Interface IEOSLeaderboardsQueryDefinitionsListener
+	Method OnEOSLeaderboardsQueryDefinitions(result:EEOSResult)
+End Interface
+
+Interface IEOSLeaderboardsQueryRanksListener
+	Method OnEOSLeaderboardsQueryRanks(result:EEOSResult, leaderboardId:String)
 End Interface
 
 Interface IEOSLogListener
@@ -716,6 +755,14 @@ Type TEOSPlatform
 	Method Achievements:TEOSAchievements()
 		If Not _handle Then Return Null
 		Return TEOSAchievements._Create(Self, bmx_eos_platform_get_achievements_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Leaderboards interface.
+	End Rem
+	Method Leaderboards:TEOSLeaderboards()
+		If Not _handle Then Return Null
+		Return TEOSLeaderboards._Create(Self, bmx_eos_platform_get_leaderboards_interface(_handle))
 	End Method
 
 	Rem
@@ -1207,6 +1254,58 @@ Type TEOSAchievementsUnlockedSubscription
 	End Method
 End Type
 
+Type TEOSLeaderboardsQueryDefinitionsRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLeaderboardsQueryDefinitionsListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLeaderboardsQueryDefinitionsRequest(owner:TEOSPlatform, listener:IEOSLeaderboardsQueryDefinitionsListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLeaderboardsQueryDefinitionsRequest = New TEOSLeaderboardsQueryDefinitionsRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLeaderboardsQueryDefinitionsRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLeaderboardsQueryDefinitionsListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLeaderboardsQueryDefinitions(result)
+	End Function
+	Function _Cancel(request:TEOSLeaderboardsQueryDefinitionsRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLeaderboardsQueryRanksRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLeaderboardsQueryRanksListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLeaderboardsQueryRanksRequest(owner:TEOSPlatform, listener:IEOSLeaderboardsQueryRanksListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLeaderboardsQueryRanksRequest = New TEOSLeaderboardsQueryRanksRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLeaderboardsQueryRanksRequest, result:EEOSResult, leaderboardId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLeaderboardsQueryRanksListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLeaderboardsQueryRanks(result, leaderboardId)
+	End Function
+	Function _Cancel(request:TEOSLeaderboardsQueryRanksRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1623,6 +1722,87 @@ Type TEOSAchievements
 	End Method
 End Type
 
+Type TEOSLeaderboards
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+	Function _Definition:TEOSLeaderboardDefinition(id:String, statName:String, aggregation:EEOSLeaderboardAggregation, startTime:Long, endTime:Long)
+		Local definition:TEOSLeaderboardDefinition = New TEOSLeaderboardDefinition
+		definition.LeaderboardId = id; definition.StatName = statName; definition.Aggregation = aggregation
+		definition.StartTime = startTime; definition.EndTime = endTime
+		Return definition
+	End Function
+	Function _Record:TEOSLeaderboardRecord(userHandle:Byte Ptr, rank:UInt, score:Int, displayName:String)
+		Local record:TEOSLeaderboardRecord = New TEOSLeaderboardRecord
+		record.UserId = TEOSProductUserId._Create(userHandle); record.Rank = rank
+		record.Score = score; record.UserDisplayName = displayName
+		Return record
+	End Function
+	Public
+	Function _Create:TEOSLeaderboards(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local leaderboards:TEOSLeaderboards = New TEOSLeaderboards
+		leaderboards._owner = owner; leaderboards._handle = handle
+		Return leaderboards
+	End Function
+	Method QueryDefinitions:TEOSLeaderboardsQueryDefinitionsRequest(options:TEOSLeaderboardsQueryDefinitionsOptions, listener:IEOSLeaderboardsQueryDefinitionsListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
+		Local localHandle:Byte Ptr
+		If options.LocalUserId Then localHandle = options.LocalUserId._NativeHandle()
+		Local request:TEOSLeaderboardsQueryDefinitionsRequest = TEOSLeaderboardsQueryDefinitionsRequest._Create(_owner, listener)
+		bmx_eos_leaderboards_query_definitions(_owner._NativeHandle(), _handle, request, localHandle, options.StartTime, options.EndTime)
+		Return request
+	End Method
+	Method QueryRanks:TEOSLeaderboardsQueryRanksRequest(localUserId:TEOSProductUserId, leaderboardId:String, listener:IEOSLeaderboardsQueryRanksListener)
+		If Not _owner Or Not _owner.IsValid() Or Not leaderboardId Or Not listener Then Return Null
+		Local localHandle:Byte Ptr
+		If localUserId Then localHandle = localUserId._NativeHandle()
+		Local request:TEOSLeaderboardsQueryRanksRequest = TEOSLeaderboardsQueryRanksRequest._Create(_owner, listener)
+		bmx_eos_leaderboards_query_ranks(_owner._NativeHandle(), _handle, request, localHandle, leaderboardId)
+		Return request
+	End Method
+	Method DefinitionCount:Int()
+		If Not _owner Or Not _owner.IsValid() Then Return 0
+		Return bmx_eos_leaderboards_definition_count(_handle)
+	End Method
+	Method CopyDefinitionByIndex:EEOSResult(index:Int, definition:TEOSLeaderboardDefinition Var)
+		definition = Null
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local id:String, statName:String, aggregation:EEOSLeaderboardAggregation, startTime:Long, endTime:Long
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_definition_by_index(_handle, UInt(index), id, statName, aggregation, startTime, endTime)
+		If result = EEOSResult.Success Then definition = _Definition(id, statName, aggregation, startTime, endTime)
+		Return result
+	End Method
+	Method CopyDefinitionById:EEOSResult(leaderboardId:String, definition:TEOSLeaderboardDefinition Var)
+		definition = Null
+		If Not _owner Or Not _owner.IsValid() Or Not leaderboardId Then Return EEOSResult.InvalidParameters
+		Local id:String, statName:String, aggregation:EEOSLeaderboardAggregation, startTime:Long, endTime:Long
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_definition_by_id(_handle, leaderboardId, id, statName, aggregation, startTime, endTime)
+		If result = EEOSResult.Success Then definition = _Definition(id, statName, aggregation, startTime, endTime)
+		Return result
+	End Method
+	Method RecordCount:Int()
+		If Not _owner Or Not _owner.IsValid() Then Return 0
+		Return bmx_eos_leaderboards_record_count(_handle)
+	End Method
+	Method CopyRecordByIndex:EEOSResult(index:Int, record:TEOSLeaderboardRecord Var)
+		record = Null
+		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local userHandle:Byte Ptr, rank:UInt, score:Int, displayName:String
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_record_by_index(_handle, UInt(index), userHandle, rank, score, displayName)
+		If result = EEOSResult.Success Then record = _Record(userHandle, rank, score, displayName)
+		Return result
+	End Method
+	Method CopyRecordByUserId:EEOSResult(userId:TEOSProductUserId, record:TEOSLeaderboardRecord Var)
+		record = Null
+		If Not _owner Or Not _owner.IsValid() Or Not userId Or Not userId.IsValid() Then Return EEOSResult.InvalidParameters
+		Local userHandle:Byte Ptr, rank:UInt, score:Int, displayName:String
+		Local result:EEOSResult = bmx_eos_leaderboards_copy_record_by_user(_handle, userId._NativeHandle(), userHandle, rank, score, displayName)
+		If result = EEOSResult.Success Then record = _Record(userHandle, rank, score, displayName)
+		Return result
+	End Method
+End Type
+
 Private
 
 Extern
@@ -1643,6 +1823,7 @@ Extern
 	Function bmx_eos_platform_get_connect_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_stats_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_achievements_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_leaderboards_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -1674,6 +1855,15 @@ Extern
 	Function bmx_eos_achievements_unlock(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, request:TEOSAchievementsUnlockRequest, userHandle:Byte Ptr, achievementIds:String[])
 	Function bmx_eos_achievements_add_notify_unlocked:ULong(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, subscription:TEOSAchievementsUnlockedSubscription)
 	Function bmx_eos_achievements_remove_notify_unlocked(id:ULong)
+
+	Function bmx_eos_leaderboards_query_definitions(platformHandle:Byte Ptr, leaderboardsHandle:Byte Ptr, request:TEOSLeaderboardsQueryDefinitionsRequest, localUserHandle:Byte Ptr, startTime:Long, endTime:Long)
+	Function bmx_eos_leaderboards_query_ranks(platformHandle:Byte Ptr, leaderboardsHandle:Byte Ptr, request:TEOSLeaderboardsQueryRanksRequest, localUserHandle:Byte Ptr, leaderboardId:String)
+	Function bmx_eos_leaderboards_definition_count:Int(leaderboardsHandle:Byte Ptr)
+	Function bmx_eos_leaderboards_copy_definition_by_index:EEOSResult(leaderboardsHandle:Byte Ptr, index:UInt, leaderboardId:String Var, statName:String Var, aggregation:EEOSLeaderboardAggregation Var, startTime:Long Var, endTime:Long Var)
+	Function bmx_eos_leaderboards_copy_definition_by_id:EEOSResult(leaderboardsHandle:Byte Ptr, requestedId:String, leaderboardId:String Var, statName:String Var, aggregation:EEOSLeaderboardAggregation Var, startTime:Long Var, endTime:Long Var)
+	Function bmx_eos_leaderboards_record_count:Int(leaderboardsHandle:Byte Ptr)
+	Function bmx_eos_leaderboards_copy_record_by_index:EEOSResult(leaderboardsHandle:Byte Ptr, index:UInt, userHandle:Byte Ptr Var, rank:UInt Var, score:Int Var, displayName:String Var)
+	Function bmx_eos_leaderboards_copy_record_by_user:EEOSResult(leaderboardsHandle:Byte Ptr, requestedUserHandle:Byte Ptr, userHandle:Byte Ptr Var, rank:UInt Var, score:Int Var, displayName:String Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

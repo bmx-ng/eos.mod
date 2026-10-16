@@ -14,6 +14,7 @@ The current foundation covers:
 - Connect login/logout, Product User enumeration, and explicit user creation
 - Stats ingest and query, with copied access to cached stat results
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
+- Leaderboard definition and ranked-record queries
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -72,12 +73,16 @@ The deployment and client policy must permit the corresponding read actions.
 Unlock testing is disabled by default. Set both `ACHIEVEMENT_ID` and
 `UNLOCK_ACHIEVEMENT=1` only when that permanent account mutation is intended.
 
+The [`leaderboards.bmx`](sdk.mod/examples/leaderboards.bmx) example queries the
+deployment's leaderboard definitions, then fetches ranked records for the first
+configured leaderboard.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
 
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
-2. Achievements, Stats, and Leaderboards (Stats and Achievements implemented)
+2. Achievements, Stats, and Leaderboards (Stats, Achievements, and ranked leaderboards implemented)
 3. Friends, Presence, and User Info
 4. Lobbies and Sessions
 5. P2P
