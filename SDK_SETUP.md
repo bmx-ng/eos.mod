@@ -12,6 +12,17 @@ eos.mod/sdk.mod/SDK/
   Lib/
 ```
 
+The easiest route is the included Max2D setup utility. Build it once, launch
+it, and drop Epic's downloaded ZIP or extracted directory onto its window:
+
+```sh
+bmk makeapp -r -t gui -o tools/eos-sdk-setup tools/eos_sdk_setup.bmx
+```
+
+It validates the SDK and installs only the headers, runtime libraries, and
+legal notices required by the binding. See [`tools/README.md`](tools/README.md)
+for command-line and CI use.
+
 The `SDK` path is intentionally ignored by Git. Epic's SDK agreement, rather
 than this binding's zlib licence, controls whether and how the SDK headers,
 libraries, tools, and notices may be redistributed. The SDK's
@@ -36,11 +47,46 @@ MinGW-oriented approach used by the Steam module. Epic's `.lib` files are COFF
 import archives and expose the expected `EOS_*` and `__imp_EOS_*` symbols, but
 the binding does not require them.
 
-The matching dynamic library must be shipped beside the application or in a
-loader search path. On macOS the dylib uses an `@rpath` install name. On Linux
-the module requests an `$ORIGIN` runtime search path. Windows applications must
-copy the matching DLL beside the executable. Packaging automation will be
-added after the binding is exercised on each target.
+## Building and shipping on each platform
+
+The helper prepares the module for compilation; the final application still
+needs the one runtime library matching its target. Do not ship every platform's
+binary with every application.
+
+### Windows (MinGW)
+
+Build normally with BlitzMax NG. The module links directly to Epic's DLL, so no
+Visual Studio `.lib` file or manual linker option is needed.
+
+- x64: copy `sdk.mod/SDK/Bin/EOSSDK-Win64-Shipping.dll` beside the `.exe`.
+- ARM64: copy `sdk.mod/SDK/Bin/EOSSDK-Win64-Shippingarm64.dll` beside the `.exe`.
+
+The DLL filename must not be changed. If it is absent, Windows will reject the
+application at startup before any EOS call is made.
+
+### Linux
+
+Build normally for x64 or ARM64, then copy the matching shared library beside
+the executable:
+
+- x64: `sdk.mod/SDK/Bin/libEOSSDK-Linux-Shipping.so`
+- ARM64: `sdk.mod/SDK/Bin/libEOSSDK-LinuxArm64-Shipping.so`
+
+The module embeds an `$ORIGIN` runtime search path, so placing the `.so` beside
+the executable is sufficient. Preserve its executable/read permissions when
+packaging it.
+
+### macOS
+
+The single `sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib` is universal and
+contains both x64 and ARM64 code. For a command-line executable, place it beside
+the executable. For an application bundle, place it in `Contents/MacOS` beside
+the bundle executable. The module supplies the loader-relative rpath needed by
+the dylib's `@rpath` install name.
+
+Sign the finished application bundle after adding the dylib. For distribution,
+the dylib must be included in the same signing and notarization workflow as the
+rest of the application.
 
 ### macOS quarantine
 

@@ -14,6 +14,8 @@ The current foundation covers:
 
 The Epic Online Services SDK is not included in this repository. See
 [`SDK_SETUP.md`](SDK_SETUP.md) for the expected SDK version and layout.
+The Max2D setup utility in [`tools`](tools/README.md) accepts either Epic's ZIP
+or extracted directory and installs the required files for you.
 
 ## Minimal lifecycle
 
@@ -57,4 +59,3 @@ The suggested implementation sequence is:
 GameNet adapters such as `GameNet.EOSOnline` and `GameNet.EOSP2P` belong in a
 different repository and should consume this binding rather than being added
 here.
-

@@ -5,5 +5,8 @@
 *.bmxbuild.stamp
 *.i
 *.i2
+tools/eos-sdk-setup
+tools/eos-sdk-setup.exe
+tools/eos-sdk-setup.app/
 sdk.mod/SDK
 sdk.mod/SDK/
