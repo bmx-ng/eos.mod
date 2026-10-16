@@ -29,11 +29,20 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
+	Field Stats:TEOSStats
+	Field Achievements:TEOSAchievements
+	Field Leaderboards:TEOSLeaderboards
 	Field CreateMissingProductUser:Int
 	Field ContinuanceToken:TEOSConnectContinuanceToken
+	Field ProductUserId:TEOSProductUserId
+	Field StatsCount:Int
+	Field DefinitionCount:Int
+	Field PlayerAchievementCount:Int
+	Field LeaderboardCount:Int
+	Field RecordCount:Int
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -121,11 +130,75 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	End Method
 
 	Method Complete(localUserId:TEOSProductUserId)
+		ProductUserId = localUserId
+		statusKind = 1
+		statusTitle = "Checking Stats..."
+		statusDetail = "Querying all configured stats without changing them."
+		Local options:TEOSStatsQueryOptions = New TEOSStatsQueryOptions
+		options.LocalUserId = localUserId
+		options.TargetUserId = localUserId
+		If Not Stats.Query(options, Self) Then Fail("Could not start Stats query", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSStatsQuery(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Stats query failed", result); Return
+		StatsCount = Stats.StatsCount(targetUserId)
+		statusTitle = "Checking Achievements..."
+		statusDetail = "Stats succeeded; querying achievement definitions."
+		Local options:TEOSAchievementsQueryDefinitionsOptions = New TEOSAchievementsQueryDefinitionsOptions
+		options.LocalUserId = ProductUserId
+		If Not Achievements.QueryDefinitions(options, Self) Then Fail("Could not query Achievements", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSAchievementsQueryDefinitions(result:EEOSResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Achievement definitions failed", result); Return
+		DefinitionCount = Achievements.DefinitionCount()
+		Local options:TEOSAchievementsQueryPlayerOptions = New TEOSAchievementsQueryPlayerOptions
+		options.LocalUserId = ProductUserId
+		options.TargetUserId = ProductUserId
+		If Not Achievements.QueryPlayerAchievements(options, Self) Then Fail("Could not query player achievements", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSAchievementsQueryPlayer(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Player achievements failed", result); Return
+		PlayerAchievementCount = Achievements.PlayerAchievementCount(targetUserId)
+		statusTitle = "Checking Leaderboards..."
+		statusDetail = "Achievements succeeded; querying leaderboard definitions."
+		Local options:TEOSLeaderboardsQueryDefinitionsOptions = New TEOSLeaderboardsQueryDefinitionsOptions
+		options.LocalUserId = ProductUserId
+		If Not Leaderboards.QueryDefinitions(options, Self) Then Fail("Could not query Leaderboards", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSLeaderboardsQueryDefinitions(result:EEOSResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Leaderboard definitions failed", result); Return
+		LeaderboardCount = Leaderboards.DefinitionCount()
+		If LeaderboardCount > 0 Then
+			Local definition:TEOSLeaderboardDefinition
+			result = Leaderboards.CopyDefinitionByIndex(0, definition)
+			If result <> EEOSResult.Success Then Fail("Could not copy leaderboard definition", result); Return
+			If Not Leaderboards.QueryRanks(ProductUserId, definition.LeaderboardId, Self) Then Fail("Could not query leaderboard ranks", EEOSResult.InvalidState)
+		Else
+			FinishServiceChecks()
+		End If
+	End Method
+
+	Method OnEOSLeaderboardsQueryRanks(result:EEOSResult, leaderboardId:String)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Leaderboard ranks failed", result); Return
+		RecordCount = Leaderboards.RecordCount()
+		FinishServiceChecks()
+	End Method
+
+	Method FinishServiceChecks()
 		succeeded = True
 		done = True
 		statusKind = 2
-		statusTitle = "Auth and Connect completed"
-		statusDetail = "Product User ID: " + localUserId.ToString()
+		statusTitle = "EOS service checks completed"
+		statusDetail = "Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
 	End Method
 
 	Method Fail(title:String, result:EEOSResult)
@@ -234,11 +307,17 @@ Function DrawScreen()
 		DrawText verificationURI, 70, 226
 		If userCode Then DrawText "Code: " + userCode, 70, 263
 	Else
-		If statusTitle = "Choose a login method" Then
+		If done And succeeded Then
+			DrawText "All read-only EOS service queries returned successfully.", 70, 205
+			DrawText "Zero values mean this Product User has no ingested data yet.", 70, 242
+		Else If done Then
+			DrawText "The test stopped at the service named above.", 70, 205
+			DrawText "Check the client policy and latest EOS log message.", 70, 242
+		Else If statusTitle = "Choose a login method" Then
 			DrawText "Press A  -  Account Portal and consent", 70, 205
 			DrawText "Press D  -  Developer Authentication Tool", 70, 242
 		Else
-			DrawText "Waiting for EOS authentication and Connect...", 70, 205
+			DrawText "Waiting for EOS authentication, Connect, and service checks...", 70, 205
 			DrawText "If a browser or Epic window opens, sign in and click Allow.", 70, 242
 		End If
 	End If
@@ -270,8 +349,8 @@ If Not configPath Then
 Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
-	initializeOptions.ProductName = "EOS Account Consent Test"
-	initializeOptions.ProductVersion = "0.2.0"
+	initializeOptions.ProductName = "EOS Integration Test"
+	initializeOptions.ProductVersion = "0.7.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -299,11 +378,17 @@ Else
 		Else
 			Local auth:TEOSAuth = platform.Auth()
 			Local connect:TEOSConnect = platform.Connect()
+			Local stats:TEOSStats = platform.Stats()
+			Local achievements:TEOSAchievements = platform.Achievements()
+			Local leaderboards:TEOSLeaderboards = platform.Leaderboards()
 			Local listener:TAuthConnectListener = New TAuthConnectListener
 			listener.Auth = auth
 			listener.Connect = connect
+			listener.Stats = stats
+			listener.Achievements = achievements
+			listener.Leaderboards = leaderboards
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-			If Not auth Or Not connect Then
+			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Then
 				statusKind = 3
 				statusTitle = "EOS interfaces are unavailable"
 				statusDetail = "The platform did not provide Auth and Connect."

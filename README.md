@@ -57,8 +57,9 @@ that directory. New Product User creation is an explicit opt-in in the config.
 For an interactive client test, build the Max2D
 [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) utility. It supports both
 the Account Portal consent flow and Developer Authentication Tool login, then
-continues through Connect and optional Product User creation. On macOS, Auth UI
-requires a GUI `.app` context; see [`tools/README.md`](tools/README.md).
+continues through Connect, optional Product User creation, and read-only Stats,
+Achievements, and Leaderboards checks. On macOS, Auth UI requires a GUI `.app`
+context; see [`tools/README.md`](tools/README.md).
 
 The [`stats.bmx`](sdk.mod/examples/stats.bmx) example continues from Developer
 Auth through Connect, ingests a configured stat, queries it, and reads the
