@@ -22,6 +22,9 @@ request all stats, and use EOS_STATS_TIME_UNDEFINED for an open time range.
 Platform.Achievements() queries localized definitions and player progress into
 the SDK cache. Its copy methods return independent BlitzMax objects, including
 stat thresholds and current player stat information.
+Explicit unlock operations are asynchronous. Unlock notification subscriptions
+must be removed when no longer needed; platform release removes any remaining
+subscriptions automatically.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

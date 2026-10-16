@@ -38,6 +38,10 @@ void eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Complete(BBObject *, EOS_E
 void eos_sdk_TEOSAchievementsQueryDefinitionsRequest__Cancel(BBObject *);
 void eos_sdk_TEOSAchievementsQueryPlayerRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ProductUserId);
 void eos_sdk_TEOSAchievementsQueryPlayerRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAchievementsUnlockRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, unsigned int);
+void eos_sdk_TEOSAchievementsUnlockRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAchievementsUnlockedSubscription__Notify(BBObject *, EOS_ProductUserId, BBString *, int64_t);
+void eos_sdk_TEOSAchievementsUnlockedSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -62,7 +66,8 @@ enum class RequestKind {
 	StatsIngest,
 	StatsQuery,
 	AchievementsQueryDefinitions,
-	AchievementsQueryPlayer
+	AchievementsQueryPlayer,
+	AchievementsUnlock
 };
 
 struct RequestContext {
@@ -132,7 +137,49 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 		case RequestKind::AchievementsQueryPlayer:
 			eos_sdk_TEOSAchievementsQueryPlayerRequest__Cancel(context->request);
 			break;
+		case RequestKind::AchievementsUnlock:
+			eos_sdk_TEOSAchievementsUnlockRequest__Cancel(context->request);
+			break;
 		}
+		delete context;
+	}
+}
+
+struct AchievementNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HAchievements achievements;
+	EOS_NotificationId id;
+	BBObject *subscription;
+
+	AchievementNotificationContext(EOS_HPlatform platform, EOS_HAchievements achievements, BBObject *subscription)
+		: platform(platform), achievements(achievements), id(EOS_INVALID_NOTIFICATIONID), subscription(subscription) {
+		BBRETAIN(subscription);
+	}
+
+	~AchievementNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<AchievementNotificationContext *> g_achievementNotifications;
+
+void RemoveAchievementNotification(AchievementNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		EOS_Achievements_RemoveNotifyAchievementsUnlocked(context->achievements, context->id);
+	}
+	auto found = std::find(g_achievementNotifications.begin(), g_achievementNotifications.end(), context);
+	if (found != g_achievementNotifications.end()) g_achievementNotifications.erase(found);
+	delete context;
+}
+
+void CancelPlatformNotifications(EOS_HPlatform platform) {
+	for (std::size_t index = 0; index < g_achievementNotifications.size();) {
+		auto *context = g_achievementNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_achievementNotifications.erase(g_achievementNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			EOS_Achievements_RemoveNotifyAchievementsUnlocked(context->achievements, context->id);
+		}
+		eos_sdk_TEOSAchievementsUnlockedSubscription__Cancel(context->subscription);
 		delete context;
 	}
 }
@@ -329,6 +376,23 @@ void EOS_CALL AchievementsQueryPlayerCallback(const EOS_Achievements_OnQueryPlay
 	if (terminal) delete context;
 }
 
+void EOS_CALL AchievementsUnlockCallback(const EOS_Achievements_OnUnlockAchievementsCompleteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSAchievementsUnlockRequest__Complete(context->request, data->ResultCode,
+		data->UserId, data->AchievementsCount);
+	if (terminal) delete context;
+}
+
+void EOS_CALL AchievementsUnlockedCallback(const EOS_Achievements_OnAchievementsUnlockedCallbackV2Info *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<AchievementNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSAchievementsUnlockedSubscription__Notify(context->subscription, data->UserId,
+		ToBBString(data->AchievementId), data->UnlockTime);
+}
+
 } // namespace
 
 extern "C" {
@@ -452,6 +516,7 @@ void bmx_eos_platform_tick(EOS_HPlatform handle) {
 void bmx_eos_platform_release(EOS_HPlatform handle) {
 	if (handle) {
 		CancelPlatformRequests(handle);
+		CancelPlatformNotifications(handle);
 		EOS_Platform_Release(handle);
 	}
 }
@@ -829,6 +894,39 @@ EOS_EResult bmx_eos_achievements_copy_player_by_id(EOS_HAchievements achievement
 	EOS_EResult result = EOS_Achievements_CopyPlayerAchievementByAchievementId(achievements, &options, &achievement);
 	return CopyPlayerAchievement(achievement, achievementId, progress, unlockTime, displayName,
 		description, iconUrl, flavorText, statNames, currentValues, thresholdValues, result);
+}
+
+void bmx_eos_achievements_unlock(EOS_HPlatform platform, EOS_HAchievements achievements,
+	BBObject *request, EOS_ProductUserId userId, BBArray *maxIds) {
+	UTF8StringArray ids(maxIds);
+	EOS_Achievements_UnlockAchievementsOptions options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_UNLOCKACHIEVEMENTS_API_LATEST;
+	options.UserId = userId;
+	options.AchievementIds = ids.data();
+	options.AchievementsCount = static_cast<uint32_t>(ids.size());
+	auto *context = CreateRequest(platform, request, RequestKind::AchievementsUnlock);
+	EOS_Achievements_UnlockAchievements(achievements, &options, context, AchievementsUnlockCallback);
+}
+
+uint64_t bmx_eos_achievements_add_notify_unlocked(EOS_HPlatform platform,
+	EOS_HAchievements achievements, BBObject *subscription) {
+	auto *context = new AchievementNotificationContext(platform, achievements, subscription);
+	EOS_Achievements_AddNotifyAchievementsUnlockedV2Options options{};
+	options.ApiVersion = EOS_ACHIEVEMENTS_ADDNOTIFYACHIEVEMENTSUNLOCKEDV2_API_LATEST;
+	context->id = EOS_Achievements_AddNotifyAchievementsUnlockedV2(
+		achievements, &options, context, AchievementsUnlockedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return EOS_INVALID_NOTIFICATIONID;
+	}
+	g_achievementNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_achievements_remove_notify_unlocked(uint64_t id) {
+	auto found = std::find_if(g_achievementNotifications.begin(), g_achievementNotifications.end(),
+		[id](const AchievementNotificationContext *context) { return context->id == id; });
+	if (found != g_achievementNotifications.end()) RemoveAchievementNotification(*found);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

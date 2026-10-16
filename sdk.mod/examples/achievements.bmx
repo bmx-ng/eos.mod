@@ -5,11 +5,14 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TAchievementsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener
+Type TAchievementsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockListener, IEOSAchievementsUnlockedListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field Achievements:TEOSAchievements
 	Field UserId:TEOSProductUserId
+	Field UnlockAchievementId:String
+	Field UnlockRequested:Int
+	Field UnlockedSubscription:TEOSAchievementsUnlockedSubscription
 	Field Done:Int
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
@@ -34,6 +37,7 @@ Type TAchievementsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListene
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Done = True; Return
 		UserId = localUserId
+		UnlockedSubscription = Achievements.AddNotifyAchievementsUnlocked(Self)
 		Local options:TEOSAchievementsQueryDefinitionsOptions = New TEOSAchievementsQueryDefinitionsOptions
 		options.LocalUserId = UserId
 		If Not Achievements.QueryDefinitions(options, Self) Then Done = True
@@ -66,7 +70,20 @@ Type TAchievementsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListene
 				If Achievements.CopyPlayerAchievementByIndex(localUserId, targetUserId, index, achievement) = EEOSResult.Success Then Print achievement.AchievementId + ": " + achievement.Progress + "%"
 			Next
 		End If
-		Done = True
+		If result = EEOSResult.Success And UnlockRequested And UnlockAchievementId Then
+			If Not Achievements.UnlockAchievements(targetUserId, [UnlockAchievementId], Self) Then Done = True
+		Else
+			Done = True
+		End If
+	End Method
+
+	Method OnEOSAchievementsUnlock(result:EEOSResult, userId:TEOSProductUserId, achievementsCount:UInt)
+		Print "Unlock achievements: " + EOSResultString(result) + " (" + achievementsCount + ")"
+		If EOSResultIsOperationComplete(result) Then Done = True
+	End Method
+
+	Method OnEOSAchievementUnlocked(userId:TEOSProductUserId, achievementId:String, unlockTime:Long)
+		Print "Achievement unlocked: " + achievementId + " at " + unlockTime
 	End Method
 End Type
 
@@ -86,7 +103,7 @@ If FileType(configPath) <> FILETYPE_FILE Then RuntimeError "Copy eos.local.conf.
 Local config:String = LoadText(configPath)
 Local init:TEOSInitializeOptions = New TEOSInitializeOptions
 init.ProductName = "EOS Achievements example"
-init.ProductVersion = "0.4.0"
+init.ProductVersion = "0.5.0"
 Local result:EEOSResult = EOSInitialize(init)
 If result <> EEOSResult.Success Then RuntimeError EOSResultString(result)
 Local platformOptions:TEOSPlatformOptions = New TEOSPlatformOptions
@@ -102,6 +119,8 @@ Local flow:TAchievementsFlow = New TAchievementsFlow
 flow.Auth = platform.Auth()
 flow.Connect = platform.Connect()
 flow.Achievements = platform.Achievements()
+flow.UnlockAchievementId = ConfigValue(config, "ACHIEVEMENT_ID")
+flow.UnlockRequested = Int(ConfigValue(config, "UNLOCK_ACHIEVEMENT"))
 Local credentials:TEOSAuthCredentials = New TEOSAuthCredentials
 credentials.Type = EEOSLoginCredentialType.Developer
 credentials.Id = ConfigValue(config, "DEV_AUTH_HOST")
@@ -115,6 +134,7 @@ While Not flow.Done And MilliSecs() - started < 120000
 	Delay 16
 Wend
 If Not flow.Done Then Print "Achievements example timed out."
+If flow.UnlockedSubscription Then flow.UnlockedSubscription.Remove()
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError EOSResultString(result)

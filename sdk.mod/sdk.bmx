@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.4.0"
+ModuleInfo "Version: 0.5.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -23,6 +23,8 @@ ModuleInfo "History: 0.3.0"
 ModuleInfo "History: Added Stats ingest, query, and cached-result access."
 ModuleInfo "History: 0.4.0"
 ModuleInfo "History: Added Achievement definition and player-progress queries."
+ModuleInfo "History: 0.5.0"
+ModuleInfo "History: Added achievement unlocking and unlock notifications."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -509,6 +511,14 @@ End Interface
 
 Interface IEOSAchievementsQueryPlayerListener
 	Method OnEOSAchievementsQueryPlayer(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSAchievementsUnlockListener
+	Method OnEOSAchievementsUnlock(result:EEOSResult, userId:TEOSProductUserId, achievementsCount:UInt)
+End Interface
+
+Interface IEOSAchievementsUnlockedListener
+	Method OnEOSAchievementUnlocked(userId:TEOSProductUserId, achievementId:String, unlockTime:Long)
 End Interface
 
 Interface IEOSLogListener
@@ -1117,6 +1127,86 @@ Type TEOSAchievementsQueryPlayerRequest
 	End Method
 End Type
 
+Type TEOSAchievementsUnlockRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAchievementsUnlockListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAchievementsUnlockRequest(owner:TEOSPlatform, listener:IEOSAchievementsUnlockListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSAchievementsUnlockRequest = New TEOSAchievementsUnlockRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAchievementsUnlockRequest, result:EEOSResult, userHandle:Byte Ptr, achievementsCount:UInt) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSAchievementsUnlockListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSAchievementsUnlock(result, TEOSProductUserId._Create(userHandle), achievementsCount)
+	End Function
+
+	Function _Cancel(request:TEOSAchievementsUnlockRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, 0)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Rem
+bbdoc: A removable achievement-unlocked notification registration.
+End Rem
+Type TEOSAchievementsUnlockedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAchievementsUnlockedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSAchievementsUnlockedSubscription(owner:TEOSPlatform, listener:IEOSAchievementsUnlockedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSAchievementsUnlockedSubscription = New TEOSAchievementsUnlockedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSAchievementsUnlockedSubscription, userHandle:Byte Ptr, achievementId:String, unlockTime:Long) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSAchievementUnlocked(TEOSProductUserId._Create(userHandle), achievementId, unlockTime)
+	End Function
+
+	Function _Cancel(subscription:TEOSAchievementsUnlockedSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_achievements_remove_notify_unlocked(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1504,6 +1594,33 @@ Type TEOSAchievements
 		If result = EEOSResult.Success Then achievement = _Player(id, progress, unlockTime, displayName, description, icon, flavor, names, current, thresholds)
 		Return result
 	End Method
+
+	Rem
+	bbdoc: Explicitly unlocks one or more achievements for a Product User.
+	End Rem
+	Method UnlockAchievements:TEOSAchievementsUnlockRequest(userId:TEOSProductUserId, achievementIds:String[], listener:IEOSAchievementsUnlockListener)
+		If Not _owner Or Not _owner.IsValid() Or Not userId Or Not userId.IsValid() Or Not listener Then Return Null
+		If Not achievementIds Or achievementIds.Length = 0 Then Return Null
+		For Local achievementId:String = EachIn achievementIds
+			If Not achievementId Then Return Null
+		Next
+		Local request:TEOSAchievementsUnlockRequest = TEOSAchievementsUnlockRequest._Create(_owner, listener)
+		bmx_eos_achievements_unlock(_owner._NativeHandle(), _handle, request, userId._NativeHandle(), achievementIds)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Registers for achievement-unlocked notifications.
+	about: Call Remove on the returned subscription when it is no longer needed.
+	Platform release also removes it safely.
+	End Rem
+	Method AddNotifyAchievementsUnlocked:TEOSAchievementsUnlockedSubscription(listener:IEOSAchievementsUnlockedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSAchievementsUnlockedSubscription = TEOSAchievementsUnlockedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_achievements_add_notify_unlocked(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
 End Type
 
 Private
@@ -1554,6 +1671,9 @@ Extern
 	Function bmx_eos_achievements_player_count:Int(achievementsHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_achievements_copy_player_by_index:EEOSResult(achievementsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, achievementId:String Var, progress:Double Var, unlockTime:Long Var, displayName:String Var, description:String Var, iconUrl:String Var, flavorText:String Var, statNames:String[] Var, currentValues:Int[] Var, thresholdValues:Int[] Var)
 	Function bmx_eos_achievements_copy_player_by_id:EEOSResult(achievementsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedId:String, achievementId:String Var, progress:Double Var, unlockTime:Long Var, displayName:String Var, description:String Var, iconUrl:String Var, flavorText:String Var, statNames:String[] Var, currentValues:Int[] Var, thresholdValues:Int[] Var)
+	Function bmx_eos_achievements_unlock(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, request:TEOSAchievementsUnlockRequest, userHandle:Byte Ptr, achievementIds:String[])
+	Function bmx_eos_achievements_add_notify_unlocked:ULong(platformHandle:Byte Ptr, achievementsHandle:Byte Ptr, subscription:TEOSAchievementsUnlockedSubscription)
+	Function bmx_eos_achievements_remove_notify_unlocked(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
