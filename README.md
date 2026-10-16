@@ -51,6 +51,12 @@ the Developer Authentication Tool flow. Copy its
 ignored `eos.local.conf`, supply your portal values, and run the example from
 that directory. New Product User creation is an explicit opt-in in the config.
 
+For an interactive client test, build the Max2D
+[`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) utility. It supports both
+the Account Portal consent flow and Developer Authentication Tool login, then
+continues through Connect and optional Product User creation. On macOS, Auth UI
+requires a GUI `.app` context; see [`tools/README.md`](tools/README.md).
+
 ## Status and roadmap
 
 The suggested implementation sequence is:

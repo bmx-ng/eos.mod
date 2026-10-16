@@ -113,6 +113,9 @@ Platform creation normally requires these values from the EOS Developer Portal:
 - Client secret
 
 Storage features additionally require a 64-character hexadecimal encryption
-key and a writable absolute cache directory. Auth and Connect tests will later
-need the appropriate client policy permissions and a chosen login flow. None of
-these values belongs in source control.
+key and a writable absolute cache directory. Auth requires an Epic Account
+Services application with Basic Profile permission and the chosen client added
+under Linked Clients. Each Epic account must grant the application consent;
+the Max2D test app documented in [`tools/README.md`](tools/README.md) can start
+that Account Portal flow and then verify Connect. None of these values belongs
+in source control.

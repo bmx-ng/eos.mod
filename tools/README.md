@@ -31,3 +31,27 @@ x64/ARM64, and universal macOS runtime libraries. It copies only `Include`,
 `Bin`, and `ThirdPartyNotices` into `sdk.mod/SDK`. Copying rather than preserving
 archive metadata also avoids carrying a browser-applied macOS quarantine
 attribute into the installed module directory.
+
+## Auth and Connect test app
+
+`eos_auth_consent.bmx` is a small Max2D client for testing the complete Epic
+Account Services Auth to EOS Connect flow. It has no MaxGUI dependency. Build
+it as a GUI application:
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_auth_consent tools/eos_auth_consent.bmx
+```
+
+On macOS, copy `sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib` into the generated
+`eos_auth_consent.app/Contents/MacOS` directory before launching the app. The
+app locates `sdk.mod/examples/eos.local.conf` when built inside this repository.
+
+Press **A** for Account Portal login. This presents Epic's browser-based consent
+flow and is normally needed once per Epic account and EAS application. Press
+**D** for the faster Developer Authentication Tool login after consent has been
+granted. If Connect reports that the account has no Product User, the app asks
+for explicit confirmation before **C** creates one.
+
+On macOS the login UI did not progress from a console executable during local
+testing. Build Auth clients as `.app` GUI bundles with an active application
+event loop; a Max2D window is sufficient and MaxGUI is not required.

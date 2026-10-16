@@ -5,6 +5,12 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
+Type TConsoleLogListener Implements IEOSLogListener
+	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
+		Print "[" + category + "] " + message
+	End Method
+End Type
+
 Type TAuthConnectFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
@@ -92,6 +98,8 @@ End Function
 
 Local configPath:String = "eos.local.conf"
 If AppArgs.Length > 1 Then configPath = AppArgs[1]
+Local loginMode:String = "developer"
+If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
 If FileType(configPath) <> FILETYPE_FILE Then
 	RuntimeError "Copy eos.local.conf.example to eos.local.conf and fill in your EOS values."
 End If
@@ -102,6 +110,8 @@ initializeOptions.ProductName = "EOS Auth and Connect example"
 initializeOptions.ProductVersion = "0.2.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
+TEOSLogging.SetListener(New TConsoleLogListener)
+TEOSLogging.SetLevel(EEOSLogCategory.AllCategories, EEOSLogLevel.Info)
 
 Local platformOptions:TEOSPlatformOptions = New TEOSPlatformOptions
 platformOptions.ProductId = ConfigValue(config, "PRODUCT_ID")
@@ -121,16 +131,27 @@ flow.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_
 If Not flow.Auth Or Not flow.Connect Then RuntimeError "Auth or Connect interface is unavailable."
 
 Local credentials:TEOSAuthCredentials = New TEOSAuthCredentials
-credentials.Type = EEOSLoginCredentialType.Developer
-credentials.Id = ConfigValue(config, "DEV_AUTH_HOST")
-credentials.Token = ConfigValue(config, "DEV_AUTH_CREDENTIAL")
+Select loginMode
+	Case "developer"
+		credentials.Type = EEOSLoginCredentialType.Developer
+		credentials.Id = ConfigValue(config, "DEV_AUTH_HOST")
+		credentials.Token = ConfigValue(config, "DEV_AUTH_CREDENTIAL")
+		Print "Starting Developer Authentication Tool login."
+	Case "account-portal", "portal"
+		credentials.Type = EEOSLoginCredentialType.AccountPortal
+		Print "Starting Account Portal login. Complete the browser flow when it opens."
+	Default
+		RuntimeError "Login mode must be developer or account-portal."
+End Select
 Local loginOptions:TEOSAuthLoginOptions = New TEOSAuthLoginOptions
 loginOptions.Credentials = credentials
 
 If Not flow.Auth.Login(loginOptions, flow) Then RuntimeError "Could not start Auth login."
 
 Local started:Int = MilliSecs()
-While Not flow.Done And MilliSecs() - started < 120000
+Local timeout:Int = 120000
+If loginMode = "account-portal" Or loginMode = "portal" Then timeout = 300000
+While Not flow.Done And MilliSecs() - started < timeout
 	platform.Tick()
 	Delay 16
 Wend

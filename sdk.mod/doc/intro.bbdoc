@@ -16,3 +16,8 @@ remaining requests before the native handle is released.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.
+
+On macOS, build interactive Auth clients as GUI application bundles. The
+tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,
+Developer Authentication Tool login, Connect, and Product User creation without
+requiring MaxGUI.
