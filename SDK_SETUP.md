@@ -23,13 +23,18 @@ publishing any SDK artifact.
 
 | Target | Link/runtime library |
 | --- | --- |
-| Windows x64 | `Lib/EOSSDK-Win64-Shipping.lib` / `Bin/EOSSDK-Win64-Shipping.dll` |
-| Windows ARM64 | `Lib/EOSSDK-Win64-Shippingarm64.lib` / `Bin/EOSSDK-Win64-Shippingarm64.dll` |
+| Windows x64 | `Bin/EOSSDK-Win64-Shipping.dll` |
+| Windows ARM64 | `Bin/EOSSDK-Win64-Shippingarm64.dll` |
 | Linux x64 | `Bin/libEOSSDK-Linux-Shipping.so` |
 | Linux ARM64 | `Bin/libEOSSDK-LinuxArm64-Shipping.so` |
 | macOS x64 and ARM64 | `Bin/libEOSSDK-Mac-Shipping.dylib` (universal binary) |
 
 There are no 32-bit desktop libraries in this SDK release.
+
+The BlitzMax Windows build links directly against the DLL, matching the
+MinGW-oriented approach used by the Steam module. Epic's `.lib` files are COFF
+import archives and expose the expected `EOS_*` and `__imp_EOS_*` symbols, but
+the binding does not require them.
 
 The matching dynamic library must be shipped beside the application or in a
 loader search path. On macOS the dylib uses an `@rpath` install name. On Linux

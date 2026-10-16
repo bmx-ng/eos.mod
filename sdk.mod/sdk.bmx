@@ -19,11 +19,11 @@ ModuleInfo "History: 0.1.0"
 ModuleInfo "History: Initial lifecycle, platform, logging, result, and identity foundation."
 
 ?win32x64
-ModuleInfo "LD_OPTS: -L%PWD%/SDK/Lib"
-Import "-lEOSSDK-Win64-Shipping"
+ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
+Import "-l:EOSSDK-Win64-Shipping.dll"
 ?win32arm64
-ModuleInfo "LD_OPTS: -L%PWD%/SDK/Lib"
-Import "-lEOSSDK-Win64-Shippingarm64"
+ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
+Import "-l:EOSSDK-Win64-Shippingarm64.dll"
 ?linuxx64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
 ModuleInfo "LD_OPTS: -Wl,-rpath,'$ORIGIN'"
