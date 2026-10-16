@@ -1,0 +1,10 @@
+Module EOS.SDK
+
+The EOS.SDK module provides the standalone Epic Online Services foundation for
+BlitzMax NG. Initialize once, create one or more platform instances, tick them
+regularly on the main thread, release them, and then shut down the SDK.
+
+The Epic SDK is a separate download and is not redistributed with this module.
+Developer-portal product configuration and credentials must be supplied at
+runtime and must not be committed to source control.
+
