@@ -115,6 +115,8 @@ void eos_sdk_TEOSP2PConnectionInterruptedSubscription__Notify(BBObject *, EOS_Pr
 void eos_sdk_TEOSP2PConnectionInterruptedSubscription__Cancel(BBObject *);
 void eos_sdk_TEOSP2PConnectionClosedSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ProductUserId, BBString *, EOS_EConnectionClosedReason);
 void eos_sdk_TEOSP2PConnectionClosedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSP2PQueryNATTypeRequest__Complete(BBObject *, EOS_EResult, EOS_ENATType);
+void eos_sdk_TEOSP2PQueryNATTypeRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -158,7 +160,8 @@ enum class RequestKind {
 	LobbyUpdate,
 	LobbySendInvite,
 	LobbyRejectInvite,
-	LobbyQueryInvites
+	LobbyQueryInvites,
+	P2PQueryNATType
 };
 
 struct RequestContext {
@@ -284,6 +287,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LobbyQueryInvites:
 			eos_sdk_TEOSLobbyQueryInvitesRequest__Cancel(context->request);
+			break;
+		case RequestKind::P2PQueryNATType:
+			eos_sdk_TEOSP2PQueryNATTypeRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -1079,6 +1085,15 @@ void EOS_CALL P2PConnectionClosedCallback(const EOS_P2P_OnRemoteConnectionClosed
 	eos_sdk_TEOSP2PConnectionClosedSubscription__Notify(context->subscription,
 		data->LocalUserId, data->RemoteUserId,
 		ToBBString(data->SocketId ? data->SocketId->SocketName : nullptr), data->Reason);
+}
+
+void EOS_CALL P2PQueryNATTypeCallback(const EOS_P2P_OnQueryNATTypeCompleteInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSP2PQueryNATTypeRequest__Complete(context->request, data->ResultCode, data->NATType);
+	if (terminal) delete context;
 }
 
 } // namespace
@@ -2758,6 +2773,92 @@ EOS_EResult bmx_eos_p2p_close_socket(EOS_HP2P p2p, EOS_ProductUserId localUserId
 	options.LocalUserId = localUserId;
 	options.SocketId = &socket;
 	return EOS_P2P_CloseConnections(p2p, &options);
+}
+
+void bmx_eos_p2p_query_nat_type(EOS_HPlatform platform, EOS_HP2P p2p, BBObject *request) {
+	auto *context = CreateRequest(platform, request, RequestKind::P2PQueryNATType);
+	EOS_P2P_QueryNATTypeOptions options{};
+	options.ApiVersion = EOS_P2P_QUERYNATTYPE_API_LATEST;
+	EOS_P2P_QueryNATType(p2p, &options, context, P2PQueryNATTypeCallback);
+}
+
+EOS_EResult bmx_eos_p2p_get_nat_type(EOS_HP2P p2p, EOS_ENATType *natType) {
+	EOS_P2P_GetNATTypeOptions options{};
+	options.ApiVersion = EOS_P2P_GETNATTYPE_API_LATEST;
+	return EOS_P2P_GetNATType(p2p, &options, natType);
+}
+
+EOS_EResult bmx_eos_p2p_set_relay_control(EOS_HP2P p2p, EOS_ERelayControl relayControl) {
+	EOS_P2P_SetRelayControlOptions options{};
+	options.ApiVersion = EOS_P2P_SETRELAYCONTROL_API_LATEST;
+	options.RelayControl = relayControl;
+	return EOS_P2P_SetRelayControl(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_get_relay_control(EOS_HP2P p2p, EOS_ERelayControl *relayControl) {
+	EOS_P2P_GetRelayControlOptions options{};
+	options.ApiVersion = EOS_P2P_GETRELAYCONTROL_API_LATEST;
+	return EOS_P2P_GetRelayControl(p2p, &options, relayControl);
+}
+
+EOS_EResult bmx_eos_p2p_set_port_range(EOS_HP2P p2p, int port, int maxAdditionalPortsToTry) {
+	EOS_P2P_SetPortRangeOptions options{};
+	options.ApiVersion = EOS_P2P_SETPORTRANGE_API_LATEST;
+	options.Port = static_cast<uint16_t>(port);
+	options.MaxAdditionalPortsToTry = static_cast<uint16_t>(maxAdditionalPortsToTry);
+	return EOS_P2P_SetPortRange(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_get_port_range(EOS_HP2P p2p, int *port, int *maxAdditionalPortsToTry) {
+	EOS_P2P_GetPortRangeOptions options{};
+	options.ApiVersion = EOS_P2P_GETPORTRANGE_API_LATEST;
+	uint16_t nativePort = 0;
+	uint16_t nativeAdditionalPorts = 0;
+	const EOS_EResult result = EOS_P2P_GetPortRange(p2p, &options, &nativePort, &nativeAdditionalPorts);
+	if (result == EOS_EResult::EOS_Success) {
+		*port = nativePort;
+		*maxAdditionalPortsToTry = nativeAdditionalPorts;
+	}
+	return result;
+}
+
+EOS_EResult bmx_eos_p2p_set_packet_queue_size(EOS_HP2P p2p,
+	uint64_t incomingMaxSizeBytes, uint64_t outgoingMaxSizeBytes) {
+	EOS_P2P_SetPacketQueueSizeOptions options{};
+	options.ApiVersion = EOS_P2P_SETPACKETQUEUESIZE_API_LATEST;
+	options.IncomingPacketQueueMaxSizeBytes = incomingMaxSizeBytes;
+	options.OutgoingPacketQueueMaxSizeBytes = outgoingMaxSizeBytes;
+	return EOS_P2P_SetPacketQueueSize(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_get_packet_queue_info(EOS_HP2P p2p,
+	uint64_t *incomingMaxSizeBytes, uint64_t *incomingCurrentSizeBytes,
+	uint64_t *incomingCurrentPacketCount, uint64_t *outgoingMaxSizeBytes,
+	uint64_t *outgoingCurrentSizeBytes, uint64_t *outgoingCurrentPacketCount) {
+	EOS_P2P_GetPacketQueueInfoOptions options{};
+	options.ApiVersion = EOS_P2P_GETPACKETQUEUEINFO_API_LATEST;
+	EOS_P2P_PacketQueueInfo info{};
+	const EOS_EResult result = EOS_P2P_GetPacketQueueInfo(p2p, &options, &info);
+	if (result == EOS_EResult::EOS_Success) {
+		*incomingMaxSizeBytes = info.IncomingPacketQueueMaxSizeBytes;
+		*incomingCurrentSizeBytes = info.IncomingPacketQueueCurrentSizeBytes;
+		*incomingCurrentPacketCount = info.IncomingPacketQueueCurrentPacketCount;
+		*outgoingMaxSizeBytes = info.OutgoingPacketQueueMaxSizeBytes;
+		*outgoingCurrentSizeBytes = info.OutgoingPacketQueueCurrentSizeBytes;
+		*outgoingCurrentPacketCount = info.OutgoingPacketQueueCurrentPacketCount;
+	}
+	return result;
+}
+
+EOS_EResult bmx_eos_p2p_clear_packet_queue(EOS_HP2P p2p,
+	EOS_ProductUserId localUserId, EOS_ProductUserId remoteUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	EOS_P2P_ClearPacketQueueOptions options{};
+	options.ApiVersion = EOS_P2P_CLEARPACKETQUEUE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.RemoteUserId = remoteUserId;
+	options.SocketId = &socket;
+	return EOS_P2P_ClearPacketQueue(p2p, &options);
 }
 
 uint64_t bmx_eos_p2p_add_notify_connection_request(EOS_HPlatform platform, EOS_HP2P p2p,

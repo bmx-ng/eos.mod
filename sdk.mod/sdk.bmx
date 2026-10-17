@@ -49,6 +49,7 @@ ModuleInfo "History: 0.16.0"
 ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snapshots."
 ModuleInfo "History: 0.17.0"
 ModuleInfo "History: Added P2P packet transport and connection-control foundation."
+ModuleInfo "History: Added P2P NAT, relay, port-range, and packet-queue controls."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -81,6 +82,8 @@ Const EOS_STATS_TIME_UNDEFINED:Long = -1
 Const EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED:Long = -1
 Const EOS_LEADERBOARDS_TIME_UNDEFINED:Long = -1
 Const EOS_P2P_MAX_PACKET_SIZE:Int = 1170
+Const EOS_P2P_MAX_CONNECTIONS:Int = 32
+Const EOS_P2P_MAX_QUEUE_SIZE_UNLIMITED:ULong = 0
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -404,6 +407,19 @@ Enum EEOSConnectionClosedReason
 	ConnectionIgnored = 11
 End Enum
 
+Enum EEOSNATType
+	Unknown = 0
+	Open = 1
+	Moderate = 2
+	Strict = 3
+End Enum
+
+Enum EEOSRelayControl
+	NoRelays = 0
+	AllowRelays = 1
+	ForceRelays = 2
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -532,6 +548,15 @@ Type TEOSP2PPacket
 	Field SocketName:String
 	Field Channel:Int
 	Field Data:Byte[]
+End Type
+
+Type TEOSP2PPacketQueueInfo
+	Field IncomingMaxSizeBytes:ULong
+	Field IncomingCurrentSizeBytes:ULong
+	Field IncomingCurrentPacketCount:ULong
+	Field OutgoingMaxSizeBytes:ULong
+	Field OutgoingCurrentSizeBytes:ULong
+	Field OutgoingCurrentPacketCount:ULong
 End Type
 
 Rem
@@ -955,6 +980,10 @@ End Interface
 
 Interface IEOSP2PConnectionClosedListener
 	Method OnEOSP2PConnectionClosed(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String, reason:EEOSConnectionClosedReason)
+End Interface
+
+Interface IEOSP2PQueryNATTypeListener
+	Method OnEOSP2PQueryNATType(result:EEOSResult, natType:EEOSNATType)
 End Interface
 
 Interface IEOSLogListener
@@ -3965,6 +3994,40 @@ bbdoc: EOS peer-to-peer packet transport for one platform.
 about: Socket names are application-defined identifiers of 1 to 32 permitted
 characters. Packet payloads are limited to #EOS_P2P_MAX_PACKET_SIZE bytes.
 End Rem
+Type TEOSP2PQueryNATTypeRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PQueryNATTypeListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSP2PQueryNATTypeRequest(owner:TEOSPlatform, listener:IEOSP2PQueryNATTypeListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSP2PQueryNATTypeRequest = New TEOSP2PQueryNATTypeRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSP2PQueryNATTypeRequest, result:EEOSResult, natType:EEOSNATType) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSP2PQueryNATTypeListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSP2PQueryNATType(result, natType)
+	End Function
+
+	Function _Cancel(request:TEOSP2PQueryNATTypeRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, EEOSNATType.Unknown)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Type TEOSP2PConnectionRequestSubscription
 	Private
 	Field _owner:TEOSPlatform
@@ -4127,6 +4190,88 @@ Type TEOSP2P
 	Method CloseConnections:EEOSResult(localUserId:TEOSProductUserId, socketName:String)
 		If Not _ValidLocalUser(localUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
 		Return bmx_eos_p2p_close_socket(_handle, localUserId._NativeHandle(), socketName)
+	End Method
+
+	Rem
+	bbdoc: Starts an asynchronous query of the local network's NAT type.
+	End Rem
+	Method QueryNATType:TEOSP2PQueryNATTypeRequest(listener:IEOSP2PQueryNATTypeListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local request:TEOSP2PQueryNATTypeRequest = TEOSP2PQueryNATTypeRequest._Create(_owner, listener)
+		bmx_eos_p2p_query_nat_type(_owner._NativeHandle(), _handle, request)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Returns the most recently queried local NAT type.
+	End Rem
+	Method GetNATType:EEOSResult(natType:EEOSNATType Var)
+		natType = EEOSNATType.Unknown
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_nat_type(_handle, natType)
+	End Method
+
+	Method SetRelayControl:EEOSResult(relayControl:EEOSRelayControl)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		If relayControl < EEOSRelayControl.NoRelays Or relayControl > EEOSRelayControl.ForceRelays Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_set_relay_control(_handle, relayControl)
+	End Method
+
+	Method GetRelayControl:EEOSResult(relayControl:EEOSRelayControl Var)
+		relayControl = EEOSRelayControl.AllowRelays
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_relay_control(_handle, relayControl)
+	End Method
+
+	Rem
+	bbdoc: Sets the preferred UDP port and the number of consecutive fallback ports.
+	about: Pass zero for both values to let the operating system select a port.
+	End Rem
+	Method SetPortRange:EEOSResult(port:Int, maxAdditionalPortsToTry:Int)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		If port < 0 Or port > 65535 Or maxAdditionalPortsToTry < 0 Or maxAdditionalPortsToTry > 65535 Then Return EEOSResult.InvalidParameters
+		If port = 0 And maxAdditionalPortsToTry <> 0 Then Return EEOSResult.InvalidParameters
+		If port + maxAdditionalPortsToTry > 65535 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_set_port_range(_handle, port, maxAdditionalPortsToTry)
+	End Method
+
+	Method GetPortRange:EEOSResult(port:Int Var, maxAdditionalPortsToTry:Int Var)
+		port = 0
+		maxAdditionalPortsToTry = 0
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_port_range(_handle, port, maxAdditionalPortsToTry)
+	End Method
+
+	Rem
+	bbdoc: Sets the maximum byte size of the incoming and outgoing packet queues.
+	about: A value of #EOS_P2P_MAX_QUEUE_SIZE_UNLIMITED allows that queue to grow without a configured limit.
+	End Rem
+	Method SetPacketQueueSize:EEOSResult(incomingMaxSizeBytes:ULong, outgoingMaxSizeBytes:ULong)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_set_packet_queue_size(_handle, incomingMaxSizeBytes, outgoingMaxSizeBytes)
+	End Method
+
+	Method GetPacketQueueInfo:EEOSResult(info:TEOSP2PPacketQueueInfo Var)
+		info = Null
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Local incomingMax:ULong, incomingCurrent:ULong, incomingCount:ULong
+		Local outgoingMax:ULong, outgoingCurrent:ULong, outgoingCount:ULong
+		Local result:EEOSResult = bmx_eos_p2p_get_packet_queue_info(_handle, incomingMax, incomingCurrent, incomingCount, outgoingMax, outgoingCurrent, outgoingCount)
+		If result = EEOSResult.Success Then
+			info = New TEOSP2PPacketQueueInfo
+			info.IncomingMaxSizeBytes = incomingMax
+			info.IncomingCurrentSizeBytes = incomingCurrent
+			info.IncomingCurrentPacketCount = incomingCount
+			info.OutgoingMaxSizeBytes = outgoingMax
+			info.OutgoingCurrentSizeBytes = outgoingCurrent
+			info.OutgoingCurrentPacketCount = outgoingCount
+		End If
+		Return result
+	End Method
+
+	Method ClearPacketQueue:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_clear_packet_queue(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
 	End Method
 
 	Method AddNotifyConnectionRequest:TEOSP2PConnectionRequestSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionRequestListener)
@@ -4336,6 +4481,15 @@ Extern
 	Function bmx_eos_p2p_accept:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_close:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_close_socket:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_query_nat_type(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, request:TEOSP2PQueryNATTypeRequest)
+	Function bmx_eos_p2p_get_nat_type:EEOSResult(p2pHandle:Byte Ptr, natType:EEOSNATType Var)
+	Function bmx_eos_p2p_set_relay_control:EEOSResult(p2pHandle:Byte Ptr, relayControl:EEOSRelayControl)
+	Function bmx_eos_p2p_get_relay_control:EEOSResult(p2pHandle:Byte Ptr, relayControl:EEOSRelayControl Var)
+	Function bmx_eos_p2p_set_port_range:EEOSResult(p2pHandle:Byte Ptr, port:Int, maxAdditionalPortsToTry:Int)
+	Function bmx_eos_p2p_get_port_range:EEOSResult(p2pHandle:Byte Ptr, port:Int Var, maxAdditionalPortsToTry:Int Var)
+	Function bmx_eos_p2p_set_packet_queue_size:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong, outgoingMaxSizeBytes:ULong)
+	Function bmx_eos_p2p_get_packet_queue_info:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong Var, incomingCurrentSizeBytes:ULong Var, incomingCurrentPacketCount:ULong Var, outgoingMaxSizeBytes:ULong Var, outgoingCurrentSizeBytes:ULong Var, outgoingCurrentPacketCount:ULong Var)
+	Function bmx_eos_p2p_clear_packet_queue:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_add_notify_connection_request:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionRequestSubscription, localUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_add_notify_connection_established:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionEstablishedSubscription, localUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_add_notify_connection_interrupted:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionInterruptedSubscription, localUserHandle:Byte Ptr, socketName:String)
