@@ -11,9 +11,12 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener
+Type TAuthConnectFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
+	Field AuthStatusSubscription:TEOSAuthLoginStatusSubscription
+	Field ConnectExpirationSubscription:TEOSConnectAuthExpirationSubscription
+	Field ConnectStatusSubscription:TEOSConnectLoginStatusSubscription
 	Field CreateMissingProductUser:Int
 	Field Done:Int
 	Field Success:Int
@@ -83,6 +86,18 @@ Type TAuthConnectFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener
 		End If
 		Done = True
 	End Method
+
+	Method OnEOSAuthLoginStatusChanged(localUserId:TEOSEpicAccountId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
+		Print "Auth login status: " + Int(previousStatus) + " -> " + Int(currentStatus)
+	End Method
+
+	Method OnEOSConnectAuthExpiration(localUserId:TEOSProductUserId)
+		Print "Connect authentication is approaching expiry for: " + localUserId.ToString()
+	End Method
+
+	Method OnEOSConnectLoginStatusChanged(localUserId:TEOSProductUserId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
+		Print "Connect login status: " + Int(previousStatus) + " -> " + Int(currentStatus)
+	End Method
 End Type
 
 Function ConfigValue:String(config:String, name:String)
@@ -107,7 +122,7 @@ Local config:String = LoadText(configPath)
 
 Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 initializeOptions.ProductName = "EOS Auth and Connect example"
-initializeOptions.ProductVersion = "0.2.0"
+initializeOptions.ProductVersion = "0.15.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
 TEOSLogging.SetListener(New TConsoleLogListener)
@@ -129,6 +144,9 @@ flow.Auth = platform.Auth()
 flow.Connect = platform.Connect()
 flow.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
 If Not flow.Auth Or Not flow.Connect Then RuntimeError "Auth or Connect interface is unavailable."
+flow.AuthStatusSubscription = flow.Auth.AddNotifyLoginStatusChanged(flow)
+flow.ConnectExpirationSubscription = flow.Connect.AddNotifyAuthExpiration(flow)
+flow.ConnectStatusSubscription = flow.Connect.AddNotifyLoginStatusChanged(flow)
 
 Local credentials:TEOSAuthCredentials = New TEOSAuthCredentials
 Select loginMode
@@ -157,6 +175,9 @@ While Not flow.Done And MilliSecs() - started < timeout
 Wend
 If Not flow.Done Then Print "Login timed out."
 
+If flow.AuthStatusSubscription Then flow.AuthStatusSubscription.Remove()
+If flow.ConnectExpirationSubscription Then flow.ConnectExpirationSubscription.Remove()
+If flow.ConnectStatusSubscription Then flow.ConnectStatusSubscription.Remove()
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError "EOS shutdown failed: " + EOSResultString(result)

@@ -70,6 +70,12 @@ void eos_sdk_TEOSBlockedUsersUpdateSubscription__Notify(BBObject *, EOS_EpicAcco
 void eos_sdk_TEOSBlockedUsersUpdateSubscription__Cancel(BBObject *);
 void eos_sdk_TEOSPresenceChangedSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_EpicAccountId);
 void eos_sdk_TEOSPresenceChangedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSAuthLoginStatusSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_ELoginStatus, EOS_ELoginStatus);
+void eos_sdk_TEOSAuthLoginStatusSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSConnectAuthExpirationSubscription__Notify(BBObject *, EOS_ProductUserId);
+void eos_sdk_TEOSConnectAuthExpirationSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSConnectLoginStatusSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ELoginStatus, EOS_ELoginStatus);
+void eos_sdk_TEOSConnectLoginStatusSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -258,6 +264,25 @@ struct PresenceNotificationContext {
 
 std::vector<PresenceNotificationContext *> g_presenceNotifications;
 
+enum class LoginNotificationKind { AuthStatus, ConnectExpiration, ConnectStatus };
+
+struct LoginNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HAuth auth;
+	EOS_HConnect connect;
+	EOS_NotificationId id;
+	LoginNotificationKind kind;
+	BBObject *subscription;
+
+	LoginNotificationContext(EOS_HPlatform platform, EOS_HAuth auth, EOS_HConnect connect,
+		LoginNotificationKind kind, BBObject *subscription)
+		: platform(platform), auth(auth), connect(connect), id(EOS_INVALID_NOTIFICATIONID),
+		  kind(kind), subscription(subscription) { BBRETAIN(subscription); }
+	~LoginNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<LoginNotificationContext *> g_loginNotifications;
+
 void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	if (!context) return;
 	if (context->id != EOS_INVALID_NOTIFICATIONID) {
@@ -289,6 +314,26 @@ void RemovePresenceNotification(PresenceNotificationContext *context) {
 	}
 	auto found = std::find(g_presenceNotifications.begin(), g_presenceNotifications.end(), context);
 	if (found != g_presenceNotifications.end()) g_presenceNotifications.erase(found);
+	delete context;
+}
+
+void RemoveLoginNotification(LoginNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		switch (context->kind) {
+		case LoginNotificationKind::AuthStatus:
+			EOS_Auth_RemoveNotifyLoginStatusChanged(context->auth, context->id);
+			break;
+		case LoginNotificationKind::ConnectExpiration:
+			EOS_Connect_RemoveNotifyAuthExpiration(context->connect, context->id);
+			break;
+		case LoginNotificationKind::ConnectStatus:
+			EOS_Connect_RemoveNotifyLoginStatusChanged(context->connect, context->id);
+			break;
+		}
+	}
+	auto found = std::find(g_loginNotifications.begin(), g_loginNotifications.end(), context);
+	if (found != g_loginNotifications.end()) g_loginNotifications.erase(found);
 	delete context;
 }
 
@@ -325,6 +370,28 @@ void CancelPlatformNotifications(EOS_HPlatform platform) {
 		if (context->id != EOS_INVALID_NOTIFICATIONID) {
 			EOS_Presence_RemoveNotifyOnPresenceChanged(context->presence, context->id);
 			eos_sdk_TEOSPresenceChangedSubscription__Cancel(context->subscription);
+		}
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_loginNotifications.size();) {
+		auto *context = g_loginNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_loginNotifications.erase(g_loginNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			switch (context->kind) {
+			case LoginNotificationKind::AuthStatus:
+				EOS_Auth_RemoveNotifyLoginStatusChanged(context->auth, context->id);
+				eos_sdk_TEOSAuthLoginStatusSubscription__Cancel(context->subscription);
+				break;
+			case LoginNotificationKind::ConnectExpiration:
+				EOS_Connect_RemoveNotifyAuthExpiration(context->connect, context->id);
+				eos_sdk_TEOSConnectAuthExpirationSubscription__Cancel(context->subscription);
+				break;
+			case LoginNotificationKind::ConnectStatus:
+				EOS_Connect_RemoveNotifyLoginStatusChanged(context->connect, context->id);
+				eos_sdk_TEOSConnectLoginStatusSubscription__Cancel(context->subscription);
+				break;
+			}
 		}
 		delete context;
 	}
@@ -645,6 +712,26 @@ void EOS_CALL PresenceChangedCallback(const EOS_Presence_PresenceChangedCallback
 	auto *context = static_cast<PresenceNotificationContext *>(data->ClientData);
 	eos_sdk_TEOSPresenceChangedSubscription__Notify(context->subscription,
 		data->LocalUserId, data->PresenceUserId);
+}
+
+void EOS_CALL AuthLoginStatusCallback(const EOS_Auth_LoginStatusChangedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LoginNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSAuthLoginStatusSubscription__Notify(context->subscription, data->LocalUserId,
+		data->PrevStatus, data->CurrentStatus);
+}
+
+void EOS_CALL ConnectAuthExpirationCallback(const EOS_Connect_AuthExpirationCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LoginNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSConnectAuthExpirationSubscription__Notify(context->subscription, data->LocalUserId);
+}
+
+void EOS_CALL ConnectLoginStatusCallback(const EOS_Connect_LoginStatusChangedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LoginNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSConnectLoginStatusSubscription__Notify(context->subscription, data->LocalUserId,
+		data->PreviousStatus, data->CurrentStatus);
 }
 
 } // namespace
@@ -1692,6 +1779,56 @@ void bmx_eos_presence_remove_notify_changed(uint64_t id) {
 	auto found = std::find_if(g_presenceNotifications.begin(), g_presenceNotifications.end(),
 		[id](const PresenceNotificationContext *context) { return context->id == id; });
 	if (found != g_presenceNotifications.end()) RemovePresenceNotification(*found);
+}
+
+int bmx_eos_auth_get_login_status(EOS_HAuth auth, EOS_EpicAccountId localUserId) {
+	return static_cast<int>(EOS_Auth_GetLoginStatus(auth, localUserId));
+}
+
+uint64_t bmx_eos_auth_add_notify_login_status(EOS_HPlatform platform, EOS_HAuth auth,
+	BBObject *subscription) {
+	auto *context = new LoginNotificationContext(platform, auth, nullptr,
+		LoginNotificationKind::AuthStatus, subscription);
+	EOS_Auth_AddNotifyLoginStatusChangedOptions options{};
+	options.ApiVersion = EOS_AUTH_ADDNOTIFYLOGINSTATUSCHANGED_API_LATEST;
+	context->id = EOS_Auth_AddNotifyLoginStatusChanged(auth, &options, context, AuthLoginStatusCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_loginNotifications.push_back(context);
+	return context->id;
+}
+
+int bmx_eos_connect_get_login_status(EOS_HConnect connect, EOS_ProductUserId localUserId) {
+	return static_cast<int>(EOS_Connect_GetLoginStatus(connect, localUserId));
+}
+
+uint64_t bmx_eos_connect_add_notify_auth_expiration(EOS_HPlatform platform, EOS_HConnect connect,
+	BBObject *subscription) {
+	auto *context = new LoginNotificationContext(platform, nullptr, connect,
+		LoginNotificationKind::ConnectExpiration, subscription);
+	EOS_Connect_AddNotifyAuthExpirationOptions options{};
+	options.ApiVersion = EOS_CONNECT_ADDNOTIFYAUTHEXPIRATION_API_LATEST;
+	context->id = EOS_Connect_AddNotifyAuthExpiration(connect, &options, context, ConnectAuthExpirationCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_loginNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_connect_add_notify_login_status(EOS_HPlatform platform, EOS_HConnect connect,
+	BBObject *subscription) {
+	auto *context = new LoginNotificationContext(platform, nullptr, connect,
+		LoginNotificationKind::ConnectStatus, subscription);
+	EOS_Connect_AddNotifyLoginStatusChangedOptions options{};
+	options.ApiVersion = EOS_CONNECT_ADDNOTIFYLOGINSTATUSCHANGED_API_LATEST;
+	context->id = EOS_Connect_AddNotifyLoginStatusChanged(connect, &options, context, ConnectLoginStatusCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_loginNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_login_remove_notify(uint64_t id) {
+	auto found = std::find_if(g_loginNotifications.begin(), g_loginNotifications.end(),
+		[id](const LoginNotificationContext *context) { return context->id == id; });
+	if (found != g_loginNotifications.end()) RemoveLoginNotification(*found);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

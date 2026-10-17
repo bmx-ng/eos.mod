@@ -54,6 +54,8 @@ for explicit confirmation before **C** creates one.
 
 After Auth succeeds, the app queries the signed-in account's User Info profile,
 friends, blocklist, and presence.
+It also verifies that Auth and Connect login-status notifications are delivered
+during the normal login sequence.
 After Connect succeeds, it performs read-only Stats, Achievements, and
 Leaderboards queries and reports the number of configured definitions and
 cached player values. It never ingests a stat or unlocks an achievement.

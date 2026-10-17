@@ -10,8 +10,8 @@ The current foundation covers:
 - platform creation, release, and explicit main-thread ticking
 - SDK logging and result helpers
 - Epic Account ID and Product User ID wrappers
-- Auth login/logout, account enumeration, and auth-token copying
-- Connect login/logout, Product User enumeration, and explicit user creation
+- Auth login/logout, account enumeration, auth-token copying, and status notifications
+- Connect login/logout, Product User enumeration, explicit user creation, status notifications, and expiry warnings
 - Stats ingest and query, with copied access to cached stat results
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
 - Leaderboard definition, ranked-record, and multi-user score queries

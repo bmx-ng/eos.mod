@@ -28,6 +28,8 @@ Global displayedFriendCount:Int
 Global displayedBlockedUserCount:Int
 Global displayedPresenceStatus:EEOSPresenceStatus
 Global displayedPresenceWrite:String
+Global authLoginStatusObserved:Int
+Global connectLoginStatusObserved:Int
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -35,13 +37,16 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field UserInfo:TEOSUserInfoInterface
 	Field Friends:TEOSFriends
 	Field Presence:TEOSPresence
 	Field PresenceChangedSubscription:TEOSPresenceChangedSubscription
+	Field AuthStatusSubscription:TEOSAuthLoginStatusSubscription
+	Field ConnectExpirationSubscription:TEOSConnectAuthExpirationSubscription
+	Field ConnectStatusSubscription:TEOSConnectLoginStatusSubscription
 	Field Stats:TEOSStats
 	Field Achievements:TEOSAchievements
 	Field Leaderboards:TEOSLeaderboards
@@ -163,6 +168,18 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 
 	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
 		If EpicAccountId And presenceUserId And presenceUserId.ToString() = EpicAccountId.ToString() Then PresenceChangeObserved = True
+	End Method
+
+	Method OnEOSAuthLoginStatusChanged(localUserId:TEOSEpicAccountId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
+		authLoginStatusObserved = True
+	End Method
+
+	Method OnEOSConnectAuthExpiration(localUserId:TEOSProductUserId)
+		latestLog = "Connect: authentication is approaching expiry"
+	End Method
+
+	Method OnEOSConnectLoginStatusChanged(localUserId:TEOSProductUserId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
+		connectLoginStatusObserved = True
 	End Method
 
 	Method BeginConnect()
@@ -524,9 +541,9 @@ Function DrawScreen()
 				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
 				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
 				If presenceWriteMode Then
-					DrawText "Presence update: " + displayedPresenceWrite, 70, 279
+					DrawText "Presence update: " + displayedPresenceWrite + "  |  Login events: " + authLoginStatusObserved + "/" + connectLoginStatusObserved, 70, 279
 				Else
-					DrawText "Zero values are valid when this test account has no data.", 70, 279
+					DrawText "Login notifications: Auth " + authLoginStatusObserved + "  |  Connect " + connectLoginStatusObserved, 70, 279
 				End If
 			End If
 		Else If done Then
@@ -581,7 +598,7 @@ Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 	initializeOptions.ProductName = "EOS Integration Test"
-	initializeOptions.ProductVersion = "0.14.0"
+	initializeOptions.ProductVersion = "0.15.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -633,8 +650,14 @@ Else
 				statusDetail = "The platform did not provide Auth and Connect."
 				done = True
 			Else If loginMode Then
+				listener.AuthStatusSubscription = auth.AddNotifyLoginStatusChanged(listener)
+				listener.ConnectExpirationSubscription = connect.AddNotifyAuthExpiration(listener)
+				listener.ConnectStatusSubscription = connect.AddNotifyLoginStatusChanged(listener)
 				If Not StartLogin(auth, listener, config, loginMode) Then done = True
 			Else
+				listener.AuthStatusSubscription = auth.AddNotifyLoginStatusChanged(listener)
+				listener.ConnectExpirationSubscription = connect.AddNotifyAuthExpiration(listener)
+				listener.ConnectStatusSubscription = connect.AddNotifyLoginStatusChanged(listener)
 				statusTitle = "Choose a login method"
 				statusDetail = "Account Portal grants consent; Developer Auth is faster afterward."
 			End If
@@ -657,6 +680,9 @@ Else
 			completedMainLoop = True
 			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
 			If listener.PresenceChangedSubscription Then listener.PresenceChangedSubscription.Remove()
+			If listener.AuthStatusSubscription Then listener.AuthStatusSubscription.Remove()
+			If listener.ConnectExpirationSubscription Then listener.ConnectExpirationSubscription.Remove()
+			If listener.ConnectStatusSubscription Then listener.ConnectStatusSubscription.Remove()
 			platform.Release()
 		End If
 

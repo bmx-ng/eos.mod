@@ -13,6 +13,9 @@ Platform.Connect() exposes game-services identity login and Product User
 creation. Both use retained request objects and listeners; call Platform.Tick()
 until a terminal result is delivered. Releasing the platform cancels any
 remaining requests before the native handle is released.
+Both interfaces expose current login status and removable status-change
+subscriptions. Connect also reports when authentication is approaching expiry
+so the application can refresh its third-party credentials.
 
 Platform.Stats() exposes stat ingestion and queries. A successful query fills
 the SDK's local cache; use StatsCount(), CopyStatByIndex(), or CopyStatByName()
