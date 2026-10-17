@@ -104,9 +104,12 @@ The example also registers a removable presence-change subscription.
 
 The [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) example signs in through Auth
 and Connect, creates a temporary invite-only lobby, copies its details and
-member count, then destroys it. The client policy must permit Lobby actions.
+member count, publishes and reads a string attribute, then destroys it. The
+client policy must permit Lobby actions.
 Lobby searches can target a lobby ID, Product User, or string parameters such
 as the built-in `bucket` key; copied search-result details are passed to Join().
+Owned modification objects publish lobby settings and searchable string
+attributes, plus local-member string attributes.
 
 ## Status and roadmap
 

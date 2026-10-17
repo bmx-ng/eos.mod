@@ -5,7 +5,7 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TLobbyFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSLobbyCreateListener, IEOSLobbyDestroyListener
+Type TLobbyFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSLobbyCreateListener, IEOSLobbyUpdateListener, IEOSLobbyDestroyListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field Lobby:TEOSLobby
@@ -67,7 +67,26 @@ Type TLobbyFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOS
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Done = True; Return
 		Print "Lobby ID: " + lobbyId
+		Local modification:TEOSLobbyModification
+		result = Lobby.CreateModification(LocalUserId, lobbyId, modification)
+		Print "Create lobby modification: " + EOSResultString(result)
+		If result <> EEOSResult.Success Then
+			Lobby.Destroy(LocalUserId, lobbyId, Self)
+			Return
+		End If
+		result = modification.AddStringAttribute("game_mode", "example")
+		Print "Add game-mode attribute: " + EOSResultString(result)
+		If result = EEOSResult.Success And Lobby.Update(modification, Self) Then
+			modification.Release()
+			Return
+		End If
+		modification.Release()
+		Lobby.Destroy(LocalUserId, lobbyId, Self)
+	End Method
 
+	Method OnEOSLobbyUpdate(result:EEOSResult, lobbyId:String)
+		Print "Lobby update: " + EOSResultString(result)
+		If Not EOSResultIsOperationComplete(result) Then Return
 		Local details:TEOSLobbyDetails
 		result = Lobby.CopyDetails(LocalUserId, lobbyId, details)
 		Print "Copy lobby details: " + EOSResultString(result)
@@ -81,6 +100,12 @@ Type TLobbyFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOS
 				Print "Available slots: " + info.AvailableSlots
 				Local owner:TEOSProductUserId = info.OwnerUserId
 				If owner Then Print "Owner Product User ID: " + owner.ToString()
+				For Local index:UInt = 0 Until details.AttributeCount()
+					Local attribute:TEOSLobbyAttribute
+					If details.CopyAttributeByIndex(index, attribute) = EEOSResult.Success Then
+						Print "Attribute: " + attribute.Key + " = " + attribute.StringValue
+					End If
+				Next
 			End If
 			details.Release()
 		End If

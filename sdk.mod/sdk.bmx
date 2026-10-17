@@ -348,6 +348,18 @@ Enum EEOSComparisonOp
 	Size = 13
 End Enum
 
+Enum EEOSLobbyAttributeType
+	Boolean = 0
+	Int64 = 1
+	DoubleValue = 2
+	StringValue = 3
+End Enum
+
+Enum EEOSLobbyAttributeVisibility
+	Public = 0
+	PrivateValue = 1
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -448,6 +460,16 @@ Type TEOSLobbyInfo
 	Field RejoinAfterKickRequiresInvite:Int
 	Field PresenceEnabled:Int
 	Field AllowedPlatformIds:Int[]
+End Type
+
+Type TEOSLobbyAttribute
+	Field Key:String
+	Field ValueType:EEOSLobbyAttributeType
+	Field IntValue:Long
+	Field DoubleValue:Double
+	Field BoolValue:Int
+	Field StringValue:String
+	Field Visibility:EEOSLobbyAttributeVisibility
 End Type
 
 Rem
@@ -819,6 +841,10 @@ End Interface
 
 Interface IEOSLobbySearchFindListener
 	Method OnEOSLobbySearchFind(result:EEOSResult)
+End Interface
+
+Interface IEOSLobbyUpdateListener
+	Method OnEOSLobbyUpdate(result:EEOSResult, lobbyId:String)
 End Interface
 
 Interface IEOSLogListener
@@ -2173,6 +2199,37 @@ Type TEOSLobbySearchFindRequest
 	End Method
 End Type
 
+Type TEOSLobbyUpdateRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyUpdateListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyUpdateRequest(owner:TEOSPlatform, listener:IEOSLobbyUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyUpdateRequest = New TEOSLobbyUpdateRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyUpdateRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyUpdateListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyUpdate(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyUpdateRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Type TEOSPresenceChangedSubscription
 	Private
 	Field _owner:TEOSPlatform
@@ -3206,6 +3263,26 @@ Type TEOSLobby
 		Return result
 	End Method
 
+	Method CreateModification:EEOSResult(localUserId:TEOSProductUserId, lobbyId:String, modification:TEOSLobbyModification Var)
+		modification = Null
+		If Not _ValidUser(localUserId) Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_create_modification(_handle, localUserId._NativeHandle(), lobbyId, handle)
+		If result = EEOSResult.Success Then modification = TEOSLobbyModification._Create(_owner, handle)
+		Return result
+	End Method
+
+	Rem
+	bbdoc: Publishes a composed lobby or member update asynchronously.
+	about: The modification may be released immediately after this method returns.
+	End Rem
+	Method Update:TEOSLobbyUpdateRequest(modification:TEOSLobbyModification, listener:IEOSLobbyUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not modification Or Not modification.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbyUpdateRequest = TEOSLobbyUpdateRequest._Create(_owner, listener)
+		bmx_eos_lobby_update(_owner._NativeHandle(), _handle, request, modification._NativeHandle())
+		Return request
+	End Method
+
 	Rem
 	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
 	End Rem
@@ -3221,6 +3298,84 @@ Type TEOSLobby
 	Private
 	Method _ValidUser:Int(localUserId:TEOSProductUserId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned collection of lobby and local-member changes.
+End Rem
+Type TEOSLobbyModification
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbyModification(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local modification:TEOSLobbyModification = New TEOSLobbyModification
+		modification._owner = owner
+		modification._handle = handle
+		Return modification
+	End Function
+
+	Method SetBucketId:EEOSResult(bucketId:String)
+		If Not IsValid() Or Not bucketId Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_set_bucket(_handle, bucketId)
+	End Method
+
+	Method SetPermissionLevel:EEOSResult(permissionLevel:EEOSLobbyPermissionLevel)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_lobby_modification_set_permission(_handle, permissionLevel)
+	End Method
+
+	Method SetMaxMembers:EEOSResult(maxMembers:UInt)
+		If Not IsValid() Or maxMembers < 1 Or maxMembers > 64 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_set_max_members(_handle, maxMembers)
+	End Method
+
+	Method SetInvitesAllowed:EEOSResult(allowInvites:Int)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_lobby_modification_set_invites(_handle, allowInvites)
+	End Method
+
+	Method AddStringAttribute:EEOSResult(key:String, value:String, visibility:EEOSLobbyAttributeVisibility = EEOSLobbyAttributeVisibility.Public)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_add_string_attribute(_handle, key, value, visibility)
+	End Method
+
+	Method RemoveAttribute:EEOSResult(key:String)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_remove_attribute(_handle, key, False)
+	End Method
+
+	Method AddStringMemberAttribute:EEOSResult(key:String, value:String, visibility:EEOSLobbyAttributeVisibility = EEOSLobbyAttributeVisibility.Public)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_add_string_member_attribute(_handle, key, value, visibility)
+	End Method
+
+	Method RemoveMemberAttribute:EEOSResult(key:String)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_remove_attribute(_handle, key, True)
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_modification_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
 	End Method
 End Type
 
@@ -3356,6 +3511,30 @@ Type TEOSLobbyDetails
 	Method MemberByIndex:TEOSProductUserId(index:UInt)
 		If Not IsValid() Then Return Null
 		Return TEOSProductUserId._Create(bmx_eos_lobby_details_get_member_by_index(_handle, index))
+	End Method
+
+	Method AttributeCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_details_get_attribute_count(_handle)
+	End Method
+
+	Method CopyAttributeByIndex:EEOSResult(index:UInt, attribute:TEOSLobbyAttribute Var)
+		attribute = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local key:String, valueType:EEOSLobbyAttributeType, intValue:Long, doubleValue:Double
+		Local boolValue:Int, stringValue:String, visibility:EEOSLobbyAttributeVisibility
+		Local result:EEOSResult = bmx_eos_lobby_details_copy_attribute_by_index(_handle, index, key, valueType, intValue, doubleValue, boolValue, stringValue, visibility)
+		If result = EEOSResult.Success Then
+			attribute = New TEOSLobbyAttribute
+			attribute.Key = key
+			attribute.ValueType = valueType
+			attribute.IntValue = intValue
+			attribute.DoubleValue = doubleValue
+			attribute.BoolValue = boolValue
+			attribute.StringValue = stringValue
+			attribute.Visibility = visibility
+		End If
+		Return result
 	End Method
 
 	Method IsValid:Int()
@@ -3504,6 +3683,18 @@ Extern
 	Function bmx_eos_lobby_details_copy_info:EEOSResult(detailsHandle:Byte Ptr, lobbyId:String Var, ownerUserHandle:Byte Ptr Var, permissionLevel:EEOSLobbyPermissionLevel Var, availableSlots:UInt Var, maxMembers:UInt Var, allowInvites:Int Var, bucketId:String Var, allowHostMigration:Int Var, rtcRoomEnabled:Int Var, allowJoinById:Int Var, rejoinAfterKickRequiresInvite:Int Var, presenceEnabled:Int Var, allowedPlatformIds:Int[] Var)
 	Function bmx_eos_lobby_details_get_member_count:UInt(detailsHandle:Byte Ptr)
 	Function bmx_eos_lobby_details_get_member_by_index:Byte Ptr(detailsHandle:Byte Ptr, index:UInt)
+	Function bmx_eos_lobby_create_modification:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, lobbyId:String, modificationHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_modification_release(modificationHandle:Byte Ptr)
+	Function bmx_eos_lobby_modification_set_bucket:EEOSResult(modificationHandle:Byte Ptr, bucketId:String)
+	Function bmx_eos_lobby_modification_set_permission:EEOSResult(modificationHandle:Byte Ptr, permissionLevel:EEOSLobbyPermissionLevel)
+	Function bmx_eos_lobby_modification_set_max_members:EEOSResult(modificationHandle:Byte Ptr, maxMembers:UInt)
+	Function bmx_eos_lobby_modification_set_invites:EEOSResult(modificationHandle:Byte Ptr, allowInvites:Int)
+	Function bmx_eos_lobby_modification_add_string_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, value:String, visibility:EEOSLobbyAttributeVisibility)
+	Function bmx_eos_lobby_modification_add_string_member_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, value:String, visibility:EEOSLobbyAttributeVisibility)
+	Function bmx_eos_lobby_modification_remove_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, member:Int)
+	Function bmx_eos_lobby_update(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyUpdateRequest, modificationHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_get_attribute_count:UInt(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_copy_attribute_by_index:EEOSResult(detailsHandle:Byte Ptr, index:UInt, key:String Var, valueType:EEOSLobbyAttributeType Var, intValue:Long Var, doubleValue:Double Var, boolValue:Int Var, stringValue:String Var, visibility:EEOSLobbyAttributeVisibility Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

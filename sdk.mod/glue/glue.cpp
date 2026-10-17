@@ -87,6 +87,8 @@ void eos_sdk_TEOSLobbyJoinRequest__Complete(BBObject *, EOS_EResult, BBString *)
 void eos_sdk_TEOSLobbyJoinRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLobbySearchFindRequest__Complete(BBObject *, EOS_EResult);
 void eos_sdk_TEOSLobbySearchFindRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyUpdateRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyUpdateRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -126,7 +128,8 @@ enum class RequestKind {
 	LobbyDestroy,
 	LobbyLeave,
 	LobbyJoin,
-	LobbySearchFind
+	LobbySearchFind,
+	LobbyUpdate
 };
 
 struct RequestContext {
@@ -240,6 +243,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LobbySearchFind:
 			eos_sdk_TEOSLobbySearchFindRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyUpdate:
+			eos_sdk_TEOSLobbyUpdateRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -811,6 +817,16 @@ void EOS_CALL LobbySearchFindCallback(const EOS_LobbySearch_FindCallbackInfo *da
 	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSLobbySearchFindRequest__Complete(context->request, data->ResultCode);
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyUpdateCallback(const EOS_Lobby_UpdateLobbyCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyUpdateRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
 	if (terminal) delete context;
 }
 
@@ -2112,6 +2128,158 @@ EOS_ProductUserId bmx_eos_lobby_details_get_member_by_index(EOS_HLobbyDetails de
 	options.ApiVersion = EOS_LOBBYDETAILS_GETMEMBERBYINDEX_API_LATEST;
 	options.MemberIndex = index;
 	return EOS_LobbyDetails_GetMemberByIndex(details, &options);
+}
+
+EOS_EResult bmx_eos_lobby_create_modification(EOS_HLobby lobby,
+	EOS_ProductUserId localUserId, BBString *maxLobbyId, EOS_HLobbyModification *modificationHandle) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_Lobby_UpdateLobbyModificationOptions options{};
+	options.ApiVersion = EOS_LOBBY_UPDATELOBBYMODIFICATION_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.LobbyId = lobbyId.required();
+	return EOS_Lobby_UpdateLobbyModification(lobby, &options, modificationHandle);
+}
+
+void bmx_eos_lobby_modification_release(EOS_HLobbyModification modification) {
+	if (modification) EOS_LobbyModification_Release(modification);
+}
+
+EOS_EResult bmx_eos_lobby_modification_set_bucket(EOS_HLobbyModification modification,
+	BBString *maxBucketId) {
+	UTF8String bucketId(maxBucketId);
+	EOS_LobbyModification_SetBucketIdOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_SETBUCKETID_API_LATEST;
+	options.BucketId = bucketId.required();
+	return EOS_LobbyModification_SetBucketId(modification, &options);
+}
+
+EOS_EResult bmx_eos_lobby_modification_set_permission(EOS_HLobbyModification modification,
+	EOS_ELobbyPermissionLevel permissionLevel) {
+	EOS_LobbyModification_SetPermissionLevelOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_SETPERMISSIONLEVEL_API_LATEST;
+	options.PermissionLevel = permissionLevel;
+	return EOS_LobbyModification_SetPermissionLevel(modification, &options);
+}
+
+EOS_EResult bmx_eos_lobby_modification_set_max_members(EOS_HLobbyModification modification,
+	unsigned int maxMembers) {
+	EOS_LobbyModification_SetMaxMembersOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_SETMAXMEMBERS_API_LATEST;
+	options.MaxMembers = maxMembers;
+	return EOS_LobbyModification_SetMaxMembers(modification, &options);
+}
+
+EOS_EResult bmx_eos_lobby_modification_set_invites(EOS_HLobbyModification modification,
+	int allowInvites) {
+	EOS_LobbyModification_SetInvitesAllowedOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_SETINVITESALLOWED_API_LATEST;
+	options.bInvitesAllowed = allowInvites ? EOS_TRUE : EOS_FALSE;
+	return EOS_LobbyModification_SetInvitesAllowed(modification, &options);
+}
+
+static EOS_EResult AddStringLobbyAttribute(EOS_HLobbyModification modification,
+	BBString *maxKey, BBString *maxValue, EOS_ELobbyAttributeVisibility visibility, bool member) {
+	UTF8String key(maxKey);
+	UTF8String value(maxValue);
+	EOS_Lobby_AttributeData attribute{};
+	attribute.ApiVersion = EOS_LOBBY_ATTRIBUTEDATA_API_LATEST;
+	attribute.Key = key.required();
+	attribute.Value.AsUtf8 = value.required();
+	attribute.ValueType = EOS_EAttributeType::EOS_AT_STRING;
+	if (member) {
+		EOS_LobbyModification_AddMemberAttributeOptions options{};
+		options.ApiVersion = EOS_LOBBYMODIFICATION_ADDMEMBERATTRIBUTE_API_LATEST;
+		options.Attribute = &attribute;
+		options.Visibility = visibility;
+		return EOS_LobbyModification_AddMemberAttribute(modification, &options);
+	}
+	EOS_LobbyModification_AddAttributeOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_ADDATTRIBUTE_API_LATEST;
+	options.Attribute = &attribute;
+	options.Visibility = visibility;
+	return EOS_LobbyModification_AddAttribute(modification, &options);
+}
+
+EOS_EResult bmx_eos_lobby_modification_add_string_attribute(EOS_HLobbyModification modification,
+	BBString *key, BBString *value, EOS_ELobbyAttributeVisibility visibility) {
+	return AddStringLobbyAttribute(modification, key, value, visibility, false);
+}
+
+EOS_EResult bmx_eos_lobby_modification_add_string_member_attribute(EOS_HLobbyModification modification,
+	BBString *key, BBString *value, EOS_ELobbyAttributeVisibility visibility) {
+	return AddStringLobbyAttribute(modification, key, value, visibility, true);
+}
+
+EOS_EResult bmx_eos_lobby_modification_remove_attribute(EOS_HLobbyModification modification,
+	BBString *maxKey, int member) {
+	UTF8String key(maxKey);
+	if (member) {
+		EOS_LobbyModification_RemoveMemberAttributeOptions options{};
+		options.ApiVersion = EOS_LOBBYMODIFICATION_REMOVEMEMBERATTRIBUTE_API_LATEST;
+		options.Key = key.required();
+		return EOS_LobbyModification_RemoveMemberAttribute(modification, &options);
+	}
+	EOS_LobbyModification_RemoveAttributeOptions options{};
+	options.ApiVersion = EOS_LOBBYMODIFICATION_REMOVEATTRIBUTE_API_LATEST;
+	options.Key = key.required();
+	return EOS_LobbyModification_RemoveAttribute(modification, &options);
+}
+
+void bmx_eos_lobby_update(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_HLobbyModification modification) {
+	EOS_Lobby_UpdateLobbyOptions options{};
+	options.ApiVersion = EOS_LOBBY_UPDATELOBBY_API_LATEST;
+	options.LobbyModificationHandle = modification;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyUpdate);
+	EOS_Lobby_UpdateLobby(lobby, &options, context, LobbyUpdateCallback);
+}
+
+unsigned int bmx_eos_lobby_details_get_attribute_count(EOS_HLobbyDetails details) {
+	EOS_LobbyDetails_GetAttributeCountOptions options{};
+	options.ApiVersion = EOS_LOBBYDETAILS_GETATTRIBUTECOUNT_API_LATEST;
+	return EOS_LobbyDetails_GetAttributeCount(details, &options);
+}
+
+static EOS_EResult CopyLobbyAttribute(EOS_Lobby_Attribute *attribute, EOS_EResult result,
+	BBString **key, EOS_EAttributeType *valueType, int64_t *intValue, double *doubleValue,
+	int *boolValue, BBString **stringValue, EOS_ELobbyAttributeVisibility *visibility) {
+	if (result != EOS_EResult::EOS_Success || !attribute || !attribute->Data) return result;
+	*key = ToBBString(attribute->Data->Key);
+	*valueType = attribute->Data->ValueType;
+	*intValue = 0;
+	*doubleValue = 0.0;
+	*boolValue = false;
+	*stringValue = &bbEmptyString;
+	switch (attribute->Data->ValueType) {
+	case EOS_EAttributeType::EOS_AT_BOOLEAN:
+		*boolValue = attribute->Data->Value.AsBool == EOS_TRUE;
+		break;
+	case EOS_EAttributeType::EOS_AT_INT64:
+		*intValue = attribute->Data->Value.AsInt64;
+		break;
+	case EOS_EAttributeType::EOS_AT_DOUBLE:
+		*doubleValue = attribute->Data->Value.AsDouble;
+		break;
+	case EOS_EAttributeType::EOS_AT_STRING:
+		*stringValue = ToBBString(attribute->Data->Value.AsUtf8);
+		break;
+	}
+	*visibility = attribute->Visibility;
+	EOS_Lobby_Attribute_Release(attribute);
+	return result;
+}
+
+EOS_EResult bmx_eos_lobby_details_copy_attribute_by_index(EOS_HLobbyDetails details,
+	unsigned int index, BBString **key, EOS_EAttributeType *valueType, int64_t *intValue,
+	double *doubleValue, int *boolValue, BBString **stringValue,
+	EOS_ELobbyAttributeVisibility *visibility) {
+	EOS_LobbyDetails_CopyAttributeByIndexOptions options{};
+	options.ApiVersion = EOS_LOBBYDETAILS_COPYATTRIBUTEBYINDEX_API_LATEST;
+	options.AttrIndex = index;
+	EOS_Lobby_Attribute *attribute = nullptr;
+	EOS_EResult result = EOS_LobbyDetails_CopyAttributeByIndex(details, &options, &attribute);
+	return CopyLobbyAttribute(attribute, result, key, valueType, intValue, doubleValue,
+		boolValue, stringValue, visibility);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {
