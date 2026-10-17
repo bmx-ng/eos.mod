@@ -19,6 +19,7 @@ The current foundation covers:
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
 - Lobby creation, search, joining, invitations, leaving, destruction, and copied lobby/member snapshots
+- P2P packet send/receive and explicit peer/socket connection control
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -123,7 +124,7 @@ The suggested implementation sequence is:
 2. Achievements, Stats, and Leaderboards (core interfaces implemented)
 3. User Info, Friends, and Presence (core read interfaces implemented)
 4. Lobbies and Sessions (Lobby lifecycle foundation implemented)
-5. P2P
+5. P2P (packet transport and connection-control foundation implemented)
 6. Player Data Storage and Title Storage
 7. RTC
 8. Ecom, UI, sanctions/reports, anti-cheat, mods, KWS, and other specialised services

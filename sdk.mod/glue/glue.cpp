@@ -10,6 +10,7 @@
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_leaderboards.h"
 #include "../SDK/Include/eos_lobby.h"
+#include "../SDK/Include/eos_p2p.h"
 #include "../SDK/Include/eos_presence.h"
 #include "../SDK/Include/eos_stats.h"
 #include "../SDK/Include/eos_userinfo.h"
@@ -18,6 +19,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
+#include <cstdio>
 #include <deque>
 #include <mutex>
 #include <string>
@@ -1145,6 +1147,10 @@ EOS_HPresence bmx_eos_platform_get_presence_interface(EOS_HPlatform handle) {
 
 EOS_HLobby bmx_eos_platform_get_lobby_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetLobbyInterface(handle) : nullptr;
+}
+
+EOS_HP2P bmx_eos_platform_get_p2p_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetP2PInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -2560,6 +2566,102 @@ void bmx_eos_lobby_remove_notify(uint64_t id) {
 	auto found = std::find_if(g_lobbyNotifications.begin(), g_lobbyNotifications.end(),
 		[id](const LobbyNotificationContext *context) { return context->id == id; });
 	if (found != g_lobbyNotifications.end()) RemoveLobbyNotification(*found);
+}
+
+static EOS_P2P_SocketId P2PSocketId(BBString *maxSocketName) {
+	UTF8String socketName(maxSocketName);
+	EOS_P2P_SocketId socket{};
+	socket.ApiVersion = EOS_P2P_SOCKETID_API_LATEST;
+	std::snprintf(socket.SocketName, sizeof(socket.SocketName), "%s", socketName.required());
+	return socket;
+}
+
+EOS_EResult bmx_eos_p2p_send(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	EOS_ProductUserId remoteUserId, BBString *maxSocketName, int channel, BBArray *maxData,
+	int allowDelayedDelivery, EOS_EPacketReliability reliability, int disableAutoAccept) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	const uint32_t length = maxData && maxData != &bbEmptyArray && maxData->dims == 1
+		? static_cast<uint32_t>(maxData->scales[0]) : 0;
+	const void *data = length ? BBARRAYDATA(maxData, maxData->dims) : nullptr;
+	EOS_P2P_SendPacketOptions options{};
+	options.ApiVersion = EOS_P2P_SENDPACKET_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.RemoteUserId = remoteUserId;
+	options.SocketId = &socket;
+	options.Channel = static_cast<uint8_t>(channel);
+	options.DataLengthBytes = length;
+	options.Data = data;
+	options.bAllowDelayedDelivery = allowDelayedDelivery ? EOS_TRUE : EOS_FALSE;
+	options.Reliability = reliability;
+	options.bDisableAutoAcceptConnection = disableAutoAccept ? EOS_TRUE : EOS_FALSE;
+	return EOS_P2P_SendPacket(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_next_packet_size(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	int requestedChannel, unsigned int *packetSize) {
+	uint8_t channel = static_cast<uint8_t>(requestedChannel);
+	EOS_P2P_GetNextReceivedPacketSizeOptions options{};
+	options.ApiVersion = EOS_P2P_GETNEXTRECEIVEDPACKETSIZE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.RequestedChannel = requestedChannel >= 0 ? &channel : nullptr;
+	return EOS_P2P_GetNextReceivedPacketSize(p2p, &options, packetSize);
+}
+
+EOS_EResult bmx_eos_p2p_receive(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	int requestedChannel, EOS_ProductUserId *remoteUserId, BBString **socketName,
+	int *outChannel, BBArray **outData) {
+	uint32_t packetSize = 0;
+	EOS_EResult result = bmx_eos_p2p_next_packet_size(p2p, localUserId, requestedChannel, &packetSize);
+	if (result != EOS_EResult::EOS_Success) return result;
+	BBArray *data = bbArrayNew1D("b", static_cast<int>(packetSize));
+	uint8_t requested = static_cast<uint8_t>(requestedChannel);
+	uint8_t channel = 0;
+	uint32_t bytesWritten = 0;
+	EOS_P2P_SocketId socket{};
+	EOS_P2P_ReceivePacketOptions options{};
+	options.ApiVersion = EOS_P2P_RECEIVEPACKET_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.MaxDataSizeBytes = packetSize;
+	options.RequestedChannel = requestedChannel >= 0 ? &requested : nullptr;
+	result = EOS_P2P_ReceivePacket(p2p, &options, remoteUserId, &socket, &channel,
+		packetSize ? BBARRAYDATA(data, data->dims) : nullptr, &bytesWritten);
+	if (result != EOS_EResult::EOS_Success) return result;
+	*socketName = ToBBString(socket.SocketName);
+	*outChannel = channel;
+	*outData = data;
+	return result;
+}
+
+EOS_EResult bmx_eos_p2p_accept(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	EOS_ProductUserId remoteUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	EOS_P2P_AcceptConnectionOptions options{};
+	options.ApiVersion = EOS_P2P_ACCEPTCONNECTION_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.RemoteUserId = remoteUserId;
+	options.SocketId = &socket;
+	return EOS_P2P_AcceptConnection(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_close(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	EOS_ProductUserId remoteUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	EOS_P2P_CloseConnectionOptions options{};
+	options.ApiVersion = EOS_P2P_CLOSECONNECTION_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.RemoteUserId = remoteUserId;
+	options.SocketId = &socket;
+	return EOS_P2P_CloseConnection(p2p, &options);
+}
+
+EOS_EResult bmx_eos_p2p_close_socket(EOS_HP2P p2p, EOS_ProductUserId localUserId,
+	BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	EOS_P2P_CloseConnectionsOptions options{};
+	options.ApiVersion = EOS_P2P_CLOSECONNECTIONS_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.SocketId = &socket;
+	return EOS_P2P_CloseConnections(p2p, &options);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

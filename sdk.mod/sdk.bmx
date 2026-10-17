@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.16.0"
+ModuleInfo "Version: 0.17.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -47,6 +47,8 @@ ModuleInfo "History: 0.15.0"
 ModuleInfo "History: Added Auth and Connect login-lifecycle notifications."
 ModuleInfo "History: 0.16.0"
 ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snapshots."
+ModuleInfo "History: 0.17.0"
+ModuleInfo "History: Added P2P packet transport and connection-control foundation."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -78,6 +80,7 @@ Const EOS_STATS_MAX_QUERY_STATS:Int = 1000
 Const EOS_STATS_TIME_UNDEFINED:Long = -1
 Const EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED:Long = -1
 Const EOS_LEADERBOARDS_TIME_UNDEFINED:Long = -1
+Const EOS_P2P_MAX_PACKET_SIZE:Int = 1170
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -369,6 +372,12 @@ Enum EEOSLobbyMemberStatus
 	Closed = 5
 End Enum
 
+Enum EEOSPacketReliability
+	UnreliableUnordered = 0
+	ReliableUnordered = 1
+	ReliableOrdered = 2
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -479,6 +488,24 @@ Type TEOSLobbyAttribute
 	Field BoolValue:Int
 	Field StringValue:String
 	Field Visibility:EEOSLobbyAttributeVisibility
+End Type
+
+Type TEOSP2PSendOptions
+	Field LocalUserId:TEOSProductUserId
+	Field RemoteUserId:TEOSProductUserId
+	Field SocketName:String
+	Field Channel:Int
+	Field Data:Byte[]
+	Field AllowDelayedDelivery:Int
+	Field Reliability:EEOSPacketReliability = EEOSPacketReliability.ReliableOrdered
+	Field DisableAutoAcceptConnection:Int
+End Type
+
+Type TEOSP2PPacket
+	Field RemoteUserId:TEOSProductUserId
+	Field SocketName:String
+	Field Channel:Int
+	Field Data:Byte[]
 End Type
 
 Rem
@@ -1123,6 +1150,14 @@ Type TEOSPlatform
 	Method Lobby:TEOSLobby()
 		If Not _handle Then Return Null
 		Return TEOSLobby._Create(Self, bmx_eos_platform_get_lobby_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services peer-to-peer networking interface.
+	End Rem
+	Method P2P:TEOSP2P()
+		If Not _handle Then Return Null
+		Return TEOSP2P._Create(Self, bmx_eos_platform_get_p2p_interface(_handle))
 	End Method
 
 	Rem
@@ -3883,6 +3918,89 @@ Type TEOSLobbyDetails
 	End Method
 End Type
 
+Rem
+bbdoc: EOS peer-to-peer packet transport for one platform.
+about: Socket names are application-defined identifiers of 1 to 32 permitted
+characters. Packet payloads are limited to #EOS_P2P_MAX_PACKET_SIZE bytes.
+End Rem
+Type TEOSP2P
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSP2P(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local p2p:TEOSP2P = New TEOSP2P
+		p2p._owner = owner
+		p2p._handle = handle
+		Return p2p
+	End Function
+
+	Method SendPacket:EEOSResult(options:TEOSP2PSendOptions)
+		If Not options Or Not _ValidUsers(options.LocalUserId, options.RemoteUserId) Then Return EEOSResult.InvalidParameters
+		If Not _ValidSocket(options.SocketName) Or options.Channel < 0 Or options.Channel > 255 Then Return EEOSResult.InvalidParameters
+		If options.Data And options.Data.Length > EOS_P2P_MAX_PACKET_SIZE Then Return EEOSResult.LimitExceeded
+		Return bmx_eos_p2p_send(_handle, options.LocalUserId._NativeHandle(), options.RemoteUserId._NativeHandle(), options.SocketName, options.Channel, options.Data, options.AllowDelayedDelivery, options.Reliability, options.DisableAutoAcceptConnection)
+	End Method
+
+	Rem
+	bbdoc: Returns the byte size of the next queued packet without removing it.
+	about: Pass -1 for requestedChannel to inspect the next packet on any channel.
+	End Rem
+	Method NextReceivedPacketSize:EEOSResult(localUserId:TEOSProductUserId, requestedChannel:Int, packetSize:UInt Var)
+		packetSize = 0
+		If Not _ValidLocalUser(localUserId) Or requestedChannel < -1 Or requestedChannel > 255 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_next_packet_size(_handle, localUserId._NativeHandle(), requestedChannel, packetSize)
+	End Method
+
+	Rem
+	bbdoc: Removes and copies the next queued packet on any or one requested channel.
+	End Rem
+	Method ReceivePacket:EEOSResult(localUserId:TEOSProductUserId, requestedChannel:Int, packet:TEOSP2PPacket Var)
+		packet = Null
+		If Not _ValidLocalUser(localUserId) Or requestedChannel < -1 Or requestedChannel > 255 Then Return EEOSResult.InvalidParameters
+		Local remoteHandle:Byte Ptr, socketName:String, channel:Int, data:Byte[]
+		Local result:EEOSResult = bmx_eos_p2p_receive(_handle, localUserId._NativeHandle(), requestedChannel, remoteHandle, socketName, channel, data)
+		If result = EEOSResult.Success Then
+			packet = New TEOSP2PPacket
+			packet.RemoteUserId = TEOSProductUserId._Create(remoteHandle)
+			packet.SocketName = socketName
+			packet.Channel = channel
+			packet.Data = data
+		End If
+		Return result
+	End Method
+
+	Method AcceptConnection:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_accept(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method CloseConnection:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_close(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method CloseConnections:EEOSResult(localUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidLocalUser(localUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_close_socket(_handle, localUserId._NativeHandle(), socketName)
+	End Method
+
+	Private
+	Method _ValidLocalUser:Int(localUserId:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+
+	Method _ValidUsers:Int(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId)
+		Return _ValidLocalUser(localUserId) And remoteUserId And remoteUserId.IsValid()
+	End Method
+
+	Method _ValidSocket:Int(socketName:String)
+		Return socketName.Length >= 1 And socketName.Length <= 32
+	End Method
+End Type
+
 Private
 
 Extern
@@ -3908,6 +4026,7 @@ Extern
 	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -4032,6 +4151,13 @@ Extern
 	Function bmx_eos_lobby_add_notify_invite_received:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteReceivedSubscription)
 	Function bmx_eos_lobby_add_notify_invite_accepted:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteAcceptedSubscription)
 	Function bmx_eos_lobby_remove_notify(id:ULong)
+
+	Function bmx_eos_p2p_send:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String, channel:Int, data:Byte[], allowDelayedDelivery:Int, reliability:EEOSPacketReliability, disableAutoAccept:Int)
+	Function bmx_eos_p2p_next_packet_size:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, requestedChannel:Int, packetSize:UInt Var)
+	Function bmx_eos_p2p_receive:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, requestedChannel:Int, remoteUserHandle:Byte Ptr Var, socketName:String Var, channel:Int Var, data:Byte[] Var)
+	Function bmx_eos_p2p_accept:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_close:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_close_socket:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, socketName:String)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
