@@ -80,6 +80,46 @@ online status and temporary test rich text, then queries the value back:
 open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer presence-write
 ```
 
+To test the Lobby lifecycle, use the isolated `lobby-write` mode. It creates an
+invite-only four-player lobby, publishes and copies a test attribute, verifies
+the owner and member snapshot, observes the lobby-update notification, and then
+destroys the lobby:
+
+```sh
+open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer lobby-write
+```
+
+The lobby uses disabled host migration so an unexpected app exit also closes
+it when the local owner disconnects. This mode does not alter Stats,
+Achievements, or Leaderboards.
+
+## Two-account P2P test app
+
+`eos_p2p_test.bmx` is a Max2D integration test for two accounts registered in
+the Developer Authentication Tool. It signs both accounts in, accepts an
+incoming connection, exchanges reliable ordered `PING` and `PONG` packets, and
+checks the connection-request, established, and closed notifications.
+
+Build it as a GUI application:
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_p2p_test tools/eos_p2p_test.bmx
+```
+
+On macOS, copy `sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib` into
+`eos_p2p_test.app/Contents/MacOS`. Keep the Developer Authentication Tool open
+with two different accounts. The first credential is `DEV_AUTH_CREDENTIAL` in
+the ignored `eos.local.conf`. Put the second credential name in the optional
+`DEV_AUTH_CREDENTIAL_2` field, or pass it as the second application argument:
+
+```sh
+open tools/eos_p2p_test.app --args sdk.mod/examples/eos.local.conf second-credential-name
+```
+
+Credential names and EOS client secrets remain only in the ignored local
+configuration or process arguments. No Product User IDs need to be copied
+between windows.
+
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
 event loop; a Max2D window is sufficient and MaxGUI is not required.

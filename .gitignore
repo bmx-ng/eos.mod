@@ -13,6 +13,8 @@ tools/eos_sdk_setup.app/
 tools/eos_sdk_setup.app.module-config
 tools/eos_auth_consent.app/
 tools/eos_auth_consent.app.module-config
+tools/eos_p2p_test.app/
+tools/eos_p2p_test.app.module-config
 sdk.mod/examples/eos.local.conf
 sdk.mod/SDK
 sdk.mod/SDK/

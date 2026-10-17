@@ -18,6 +18,8 @@ The current foundation covers:
 - User Info account, display-name, and external-account queries with copied cache access
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
+- Lobby creation, search, joining, invitations, leaving, destruction, and copied lobby/member snapshots
+- P2P packet transport, connection notifications, NAT discovery, relay/port configuration, and packet-queue controls
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -101,6 +103,26 @@ rich text, product information, and custom data records. Its explicit `write`
 mode publishes an online status and test rich-text value, then queries it back.
 The example also registers a removable presence-change subscription.
 
+The [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) example signs in through Auth
+and Connect, creates a temporary invite-only lobby, copies its details and
+member count, publishes and reads a string attribute, then destroys it. The
+client policy must permit Lobby actions.
+Lobby searches can target a lobby ID, Product User, or string parameters such
+as the built-in `bucket` key; copied search-result details are passed to Join().
+Owned modification objects publish lobby settings and searchable string
+attributes, plus local-member string attributes.
+Invitations can be sent, queried, enumerated, rejected, and converted into a
+lobby-details handle suitable for Join().
+Removable notifications report lobby updates, member-data updates, member
+join/leave status, received invitations, and accepted invitations.
+
+The [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) example reads
+the active relay policy, UDP port range, and packet-queue telemetry, registers
+the queue-overflow notification, round-trips
+their current values, and asynchronously queries the local NAT type. Relay and
+port settings apply to new connections; the default relay policy permits EOS
+to fall back from direct connections to Epic-hosted relays.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
@@ -108,8 +130,8 @@ The suggested implementation sequence is:
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
 2. Achievements, Stats, and Leaderboards (core interfaces implemented)
 3. User Info, Friends, and Presence (core read interfaces implemented)
-4. Lobbies and Sessions
-5. P2P
+4. Lobbies and Sessions (Lobby lifecycle foundation implemented)
+5. P2P (packet transport and connection-control foundation implemented)
 6. Player Data Storage and Title Storage
 7. RTC
 8. Ecom, UI, sanctions/reports, anti-cheat, mods, KWS, and other specialised services

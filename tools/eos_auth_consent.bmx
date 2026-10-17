@@ -24,6 +24,7 @@ Global latestLog:String
 Global pendingProductUser:Int
 Global writeMode:Int
 Global presenceWriteMode:Int
+Global lobbyWriteMode:Int
 Global displayedFriendCount:Int
 Global displayedBlockedUserCount:Int
 Global displayedPresenceStatus:EEOSPresenceStatus
@@ -37,7 +38,7 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener, IEOSLobbyCreateListener, IEOSLobbyUpdateListener, IEOSLobbyDestroyListener, IEOSLobbyUpdateReceivedListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field UserInfo:TEOSUserInfoInterface
@@ -50,6 +51,7 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field Stats:TEOSStats
 	Field Achievements:TEOSAchievements
 	Field Leaderboards:TEOSLeaderboards
+	Field Lobby:TEOSLobby
 	Field CreateMissingProductUser:Int
 	Field ContinuanceToken:TEOSConnectContinuanceToken
 	Field ProductUserId:TEOSProductUserId
@@ -79,6 +81,14 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field PresenceWriteTest:Int
 	Field PresenceWriteStage:Int
 	Field PresenceChangeObserved:Int
+	Field LobbyWriteTest:Int
+	Field ActiveLobbyId:String
+	Field LobbyFailure:String
+	Field LobbyValidated:Int
+	Field LobbyUpdateObserved:Int
+	Field LobbyNotificationWaitUntil:Int
+	Field LobbyDestroyStarted:Int
+	Field LobbyUpdateSubscription:TEOSLobbyUpdateReceivedSubscription
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -369,11 +379,112 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 			If Not Stats.Ingest(options, Self) Then Fail("Could not start stat ingest", EEOSResult.InvalidState)
 			Return
 		End If
+		If LobbyWriteTest Then
+			StartLobbyTest()
+			Return
+		End If
 		succeeded = True
 		done = True
 		statusKind = 2
 		statusTitle = "EOS service checks completed"
 		statusDetail = ProfileDisplayName + " | Friends " + FriendCount + " | Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
+	End Method
+
+	Method StartLobbyTest()
+		LobbyUpdateSubscription = Lobby.AddNotifyLobbyUpdateReceived(Self)
+		If Not LobbyUpdateSubscription Then Fail("Could not subscribe to Lobby updates", EEOSResult.InvalidState); Return
+		statusKind = 1
+		statusTitle = "Creating temporary EOS lobby..."
+		statusDetail = "The lobby will be updated, checked, and destroyed automatically."
+		Local options:TEOSLobbyCreateOptions = New TEOSLobbyCreateOptions
+		options.LocalUserId = ProductUserId
+		options.MaxMembers = 4
+		options.PermissionLevel = EEOSLobbyPermissionLevel.InviteOnly
+		options.AllowInvites = True
+		options.BucketId = "blitzmax-eos-test"
+		options.DisableHostMigration = True
+		If Not Lobby.Create(options, Self) Then Fail("Could not start Lobby creation", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSLobbyCreate(result:EEOSResult, lobbyId:String)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Lobby creation failed", result); Return
+		ActiveLobbyId = lobbyId
+		statusTitle = "Publishing lobby metadata..."
+		statusDetail = "Lobby " + lobbyId
+		Local modification:TEOSLobbyModification
+		result = Lobby.CreateModification(ProductUserId, lobbyId, modification)
+		If result <> EEOSResult.Success Then LobbyFailure = "Could not create Lobby modification: " + EOSResultString(result); DestroyTestLobby(); Return
+		result = modification.AddStringAttribute("game_mode", "blitzmax-test")
+		If result <> EEOSResult.Success Then modification.Release(); LobbyFailure = "Could not add Lobby attribute: " + EOSResultString(result); DestroyTestLobby(); Return
+		If Not Lobby.Update(modification, Self) Then modification.Release(); LobbyFailure = "Could not start Lobby update"; DestroyTestLobby(); Return
+		modification.Release()
+	End Method
+
+	Method OnEOSLobbyUpdate(result:EEOSResult, lobbyId:String)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then LobbyFailure = "Lobby update failed: " + EOSResultString(result); DestroyTestLobby(); Return
+		Local details:TEOSLobbyDetails
+		result = Lobby.CopyDetails(ProductUserId, lobbyId, details)
+		If result <> EEOSResult.Success Then LobbyFailure = "Could not copy Lobby details: " + EOSResultString(result); DestroyTestLobby(); Return
+		Local info:TEOSLobbyInfo
+		result = details.CopyInfo(info)
+		If result <> EEOSResult.Success Then details.Release(); LobbyFailure = "Could not copy Lobby info: " + EOSResultString(result); DestroyTestLobby(); Return
+		If info.LobbyId <> lobbyId Or info.BucketId <> "blitzmax-eos-test" Or details.MemberCount() <> 1 Then
+			details.Release()
+			LobbyFailure = "Lobby details did not match the created lobby"
+			DestroyTestLobby()
+			Return
+		End If
+		For Local index:UInt = 0 Until details.AttributeCount()
+			Local attribute:TEOSLobbyAttribute
+			If details.CopyAttributeByIndex(index, attribute) = EEOSResult.Success And attribute.Key = "game_mode" And attribute.StringValue = "blitzmax-test" Then LobbyValidated = True
+		Next
+		details.Release()
+		If Not LobbyValidated Then LobbyFailure = "Published Lobby attribute was not found"
+		If LobbyFailure Or LobbyUpdateObserved Then
+			DestroyTestLobby()
+		Else
+			LobbyNotificationWaitUntil = MilliSecs() + 3000
+			statusTitle = "Waiting for EOS lobby notification..."
+			statusDetail = "The update is validated; waiting for its change event."
+		End If
+	End Method
+
+	Method OnEOSLobbyUpdateReceived(lobbyId:String)
+		If lobbyId <> ActiveLobbyId Then Return
+		LobbyUpdateObserved = True
+		If LobbyValidated And LobbyNotificationWaitUntil Then
+			LobbyNotificationWaitUntil = 0
+			DestroyTestLobby()
+		End If
+	End Method
+
+	Method DestroyTestLobby()
+		If LobbyDestroyStarted Then Return
+		LobbyDestroyStarted = True
+		LobbyNotificationWaitUntil = 0
+		statusTitle = "Destroying temporary EOS lobby..."
+		statusDetail = ActiveLobbyId
+		If Not Lobby.Destroy(ProductUserId, ActiveLobbyId, Self) Then Fail("Could not start Lobby destruction", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSLobbyDestroy(result:EEOSResult, lobbyId:String)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		ActiveLobbyId = ""
+		If result <> EEOSResult.Success Then Fail("Lobby destruction failed", result); Return
+		If LobbyFailure Then
+			done = True
+			statusKind = 3
+			statusTitle = "EOS lobby check failed"
+			statusDetail = LobbyFailure
+			Return
+		End If
+		succeeded = True
+		done = True
+		statusKind = 2
+		statusTitle = "EOS lobby lifecycle completed"
+		statusDetail = "Created, updated, notified, copied, validated, and destroyed the temporary lobby."
 	End Method
 
 	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
@@ -396,6 +507,12 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	End Method
 
 	Method Update()
+		If LobbyNotificationWaitUntil And MilliSecs() >= LobbyNotificationWaitUntil Then
+			LobbyNotificationWaitUntil = 0
+			LobbyFailure = "Lobby update notification was not received"
+			DestroyTestLobby()
+			Return
+		End If
 		If Not RefreshAt Or MilliSecs() < RefreshAt Then Return
 		RefreshAt = 0
 		RefreshAttempts :+ 1
@@ -533,7 +650,10 @@ Function DrawScreen()
 		If userCode Then DrawText "Code: " + userCode, 70, 263
 	Else
 		If done And succeeded Then
-			If writeMode Then
+			If lobbyWriteMode Then
+				DrawText "Temporary lobby lifecycle and metadata validation succeeded.", 70, 205
+				DrawText "The test lobby was destroyed cleanly.", 70, 242
+			Else If writeMode Then
 				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
 				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
 				DrawText "The test achievement may now be permanently unlocked.", 70, 279
@@ -589,6 +709,7 @@ Local loginMode:String
 If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
 If AppArgs.Length > 3 And AppArgs[3].ToLower() = "write" Then writeMode = True
 If AppArgs.Length > 3 And AppArgs[3].ToLower() = "presence-write" Then presenceWriteMode = True
+If AppArgs.Length > 3 And AppArgs[3].ToLower() = "lobby-write" Then lobbyWriteMode = True
 If Not configPath Then
 	statusKind = 3
 	statusTitle = "eos.local.conf was not found"
@@ -598,7 +719,7 @@ Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 	initializeOptions.ProductName = "EOS Integration Test"
-	initializeOptions.ProductVersion = "0.15.0"
+	initializeOptions.ProductVersion = "0.16.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -632,6 +753,7 @@ Else
 			Local userInfo:TEOSUserInfoInterface = platform.UserInfo()
 			Local friends:TEOSFriends = platform.Friends()
 			Local presence:TEOSPresence = platform.Presence()
+			Local lobby:TEOSLobby = platform.Lobby()
 			Local listener:TAuthConnectListener = New TAuthConnectListener
 			listener.Auth = auth
 			listener.Connect = connect
@@ -641,10 +763,12 @@ Else
 			listener.Stats = stats
 			listener.Achievements = achievements
 			listener.Leaderboards = leaderboards
+			listener.Lobby = lobby
 			listener.WriteTest = writeMode
 			listener.PresenceWriteTest = presenceWriteMode
+			listener.LobbyWriteTest = lobbyWriteMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Or Not presence Then
+			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Or Not presence Or Not lobby Then
 				statusKind = 3
 				statusTitle = "EOS interfaces are unavailable"
 				statusDetail = "The platform did not provide Auth and Connect."
@@ -680,6 +804,7 @@ Else
 			completedMainLoop = True
 			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
 			If listener.PresenceChangedSubscription Then listener.PresenceChangedSubscription.Remove()
+			If listener.LobbyUpdateSubscription Then listener.LobbyUpdateSubscription.Remove()
 			If listener.AuthStatusSubscription Then listener.AuthStatusSubscription.Remove()
 			If listener.ConnectExpirationSubscription Then listener.ConnectExpirationSubscription.Remove()
 			If listener.ConnectStatusSubscription Then listener.ConnectStatusSubscription.Remove()

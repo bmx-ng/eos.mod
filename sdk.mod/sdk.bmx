@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.15.0"
+ModuleInfo "Version: 0.17.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -45,6 +45,11 @@ ModuleInfo "History: 0.14.0"
 ModuleInfo "History: Added presence-change notifications."
 ModuleInfo "History: 0.15.0"
 ModuleInfo "History: Added Auth and Connect login-lifecycle notifications."
+ModuleInfo "History: 0.16.0"
+ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snapshots."
+ModuleInfo "History: 0.17.0"
+ModuleInfo "History: Added P2P packet transport and connection-control foundation."
+ModuleInfo "History: Added P2P NAT, relay, port-range, and packet-queue controls."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -76,6 +81,9 @@ Const EOS_STATS_MAX_QUERY_STATS:Int = 1000
 Const EOS_STATS_TIME_UNDEFINED:Long = -1
 Const EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED:Long = -1
 Const EOS_LEADERBOARDS_TIME_UNDEFINED:Long = -1
+Const EOS_P2P_MAX_PACKET_SIZE:Int = 1170
+Const EOS_P2P_MAX_CONNECTIONS:Int = 32
+Const EOS_P2P_MAX_QUEUE_SIZE_UNLIMITED:ULong = 0
 
 Rem
 bbdoc: Results shared by EOS interfaces.
@@ -323,6 +331,95 @@ Enum EEOSLeaderboardAggregation
 	Latest = 3
 End Enum
 
+Enum EEOSLobbyPermissionLevel
+	PublicAdvertised = 0
+	JoinViaPresence = 1
+	InviteOnly = 2
+End Enum
+
+Enum EEOSComparisonOp
+	Equal = 0
+	NotEqual = 1
+	GreaterThan = 2
+	GreaterThanOrEqual = 3
+	LessThan = 4
+	LessThanOrEqual = 5
+	Distance = 6
+	AnyOf = 7
+	NotAnyOf = 8
+	OneOf = 9
+	NotOneOf = 10
+	Contains = 11
+	RegexMatch = 12
+	Size = 13
+End Enum
+
+Enum EEOSLobbyAttributeType
+	Boolean = 0
+	Int64 = 1
+	DoubleValue = 2
+	StringValue = 3
+End Enum
+
+Enum EEOSLobbyAttributeVisibility
+	Public = 0
+	PrivateValue = 1
+End Enum
+
+Enum EEOSLobbyMemberStatus
+	Joined = 0
+	Left = 1
+	Disconnected = 2
+	Kicked = 3
+	Promoted = 4
+	Closed = 5
+End Enum
+
+Enum EEOSPacketReliability
+	UnreliableUnordered = 0
+	ReliableUnordered = 1
+	ReliableOrdered = 2
+End Enum
+
+Enum EEOSConnectionEstablishedType
+	NewConnection = 0
+	Reconnection = 1
+End Enum
+
+Enum EEOSNetworkConnectionType
+	NoConnection = 0
+	DirectConnection = 1
+	RelayedConnection = 2
+End Enum
+
+Enum EEOSConnectionClosedReason
+	Unknown = 0
+	ClosedByLocalUser = 1
+	ClosedByPeer = 2
+	TimedOut = 3
+	TooManyConnections = 4
+	InvalidMessage = 5
+	InvalidData = 6
+	ConnectionFailed = 7
+	ConnectionClosed = 8
+	NegotiationFailed = 9
+	UnexpectedError = 10
+	ConnectionIgnored = 11
+End Enum
+
+Enum EEOSNATType
+	Unknown = 0
+	Open = 1
+	Moderate = 2
+	Strict = 3
+End Enum
+
+Enum EEOSRelayControl
+	NoRelays = 0
+	AllowRelays = 1
+	ForceRelays = 2
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -379,6 +476,87 @@ End Type
 Type TEOSConnectLoginOptions
 	Field Credentials:TEOSConnectCredentials
 	Field UserLoginInfo:TEOSConnectUserLoginInfo
+End Type
+
+Rem
+bbdoc: Values used to create a lobby.
+about: BucketId is the lobby's primary search partition and must be non-empty.
+End Rem
+Type TEOSLobbyCreateOptions
+	Field LocalUserId:TEOSProductUserId
+	Field MaxMembers:UInt = 4
+	Field PermissionLevel:EEOSLobbyPermissionLevel = EEOSLobbyPermissionLevel.InviteOnly
+	Field PresenceEnabled:Int
+	Field AllowInvites:Int = True
+	Field BucketId:String
+	Field DisableHostMigration:Int
+	Field EnableRTCRoom:Int
+	Field EnableJoinById:Int
+	Field RejoinAfterKickRequiresInvite:Int
+	Field CrossplayOptOut:Int
+End Type
+
+Type TEOSLobbyJoinOptions
+	Field LocalUserId:TEOSProductUserId
+	Field Details:TEOSLobbyDetails
+	Field PresenceEnabled:Int
+	Field CrossplayOptOut:Int
+End Type
+
+Rem
+bbdoc: General information copied from a lobby-details handle.
+End Rem
+Type TEOSLobbyInfo
+	Field LobbyId:String
+	Field OwnerUserId:TEOSProductUserId
+	Field PermissionLevel:EEOSLobbyPermissionLevel
+	Field AvailableSlots:UInt
+	Field MaxMembers:UInt
+	Field AllowInvites:Int
+	Field BucketId:String
+	Field AllowHostMigration:Int
+	Field RTCRoomEnabled:Int
+	Field AllowJoinById:Int
+	Field RejoinAfterKickRequiresInvite:Int
+	Field PresenceEnabled:Int
+	Field AllowedPlatformIds:Int[]
+End Type
+
+Type TEOSLobbyAttribute
+	Field Key:String
+	Field ValueType:EEOSLobbyAttributeType
+	Field IntValue:Long
+	Field DoubleValue:Double
+	Field BoolValue:Int
+	Field StringValue:String
+	Field Visibility:EEOSLobbyAttributeVisibility
+End Type
+
+Type TEOSP2PSendOptions
+	Field LocalUserId:TEOSProductUserId
+	Field RemoteUserId:TEOSProductUserId
+	Field SocketName:String
+	Field Channel:Int
+	Field Data:Byte[]
+	Field AllowDelayedDelivery:Int
+	Field Reliability:EEOSPacketReliability = EEOSPacketReliability.ReliableOrdered
+	Field DisableAutoAcceptConnection:Int
+End Type
+
+Type TEOSP2PPacket
+	Field RemoteUserId:TEOSProductUserId
+	Field SocketName:String
+	Field Channel:Int
+	Field Data:Byte[]
+End Type
+
+Type TEOSP2PPacketQueueInfo
+	Field IncomingMaxSizeBytes:ULong
+	Field IncomingCurrentSizeBytes:ULong
+	Field IncomingCurrentPacketCount:ULong
+	Field OutgoingMaxSizeBytes:ULong
+	Field OutgoingCurrentSizeBytes:ULong
+	Field OutgoingCurrentPacketCount:ULong
 End Type
 
 Rem
@@ -732,6 +910,86 @@ Interface IEOSPresenceChangedListener
 	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSLobbyCreateListener
+	Method OnEOSLobbyCreate(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyDestroyListener
+	Method OnEOSLobbyDestroy(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyLeaveListener
+	Method OnEOSLobbyLeave(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyJoinListener
+	Method OnEOSLobbyJoin(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbySearchFindListener
+	Method OnEOSLobbySearchFind(result:EEOSResult)
+End Interface
+
+Interface IEOSLobbyUpdateListener
+	Method OnEOSLobbyUpdate(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbySendInviteListener
+	Method OnEOSLobbySendInvite(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyRejectInviteListener
+	Method OnEOSLobbyRejectInvite(result:EEOSResult, inviteId:String)
+End Interface
+
+Interface IEOSLobbyQueryInvitesListener
+	Method OnEOSLobbyQueryInvites(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyUpdateReceivedListener
+	Method OnEOSLobbyUpdateReceived(lobbyId:String)
+End Interface
+
+Interface IEOSLobbyMemberUpdateReceivedListener
+	Method OnEOSLobbyMemberUpdateReceived(lobbyId:String, targetUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyMemberStatusReceivedListener
+	Method OnEOSLobbyMemberStatusReceived(lobbyId:String, targetUserId:TEOSProductUserId, status:EEOSLobbyMemberStatus)
+End Interface
+
+Interface IEOSLobbyInviteReceivedListener
+	Method OnEOSLobbyInviteReceived(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyInviteAcceptedListener
+	Method OnEOSLobbyInviteAccepted(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId, lobbyId:String)
+End Interface
+
+Interface IEOSP2PConnectionRequestListener
+	Method OnEOSP2PConnectionRequest(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+End Interface
+
+Interface IEOSP2PConnectionEstablishedListener
+	Method OnEOSP2PConnectionEstablished(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String, connectionType:EEOSConnectionEstablishedType, networkType:EEOSNetworkConnectionType)
+End Interface
+
+Interface IEOSP2PConnectionInterruptedListener
+	Method OnEOSP2PConnectionInterrupted(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+End Interface
+
+Interface IEOSP2PConnectionClosedListener
+	Method OnEOSP2PConnectionClosed(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String, reason:EEOSConnectionClosedReason)
+End Interface
+
+Interface IEOSP2PQueryNATTypeListener
+	Method OnEOSP2PQueryNATType(result:EEOSResult, natType:EEOSNATType)
+End Interface
+
+Interface IEOSP2PIncomingPacketQueueFullListener
+	Method OnEOSP2PIncomingPacketQueueFull(maxSizeBytes:ULong, currentSizeBytes:ULong, localUserId:TEOSProductUserId, channel:Int, packetSizeBytes:UInt)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -959,6 +1217,22 @@ Type TEOSPlatform
 	Method Presence:TEOSPresence()
 		If Not _handle Then Return Null
 		Return TEOSPresence._Create(Self, bmx_eos_platform_get_presence_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Lobby interface.
+	End Rem
+	Method Lobby:TEOSLobby()
+		If Not _handle Then Return Null
+		Return TEOSLobby._Create(Self, bmx_eos_platform_get_lobby_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services peer-to-peer networking interface.
+	End Rem
+	Method P2P:TEOSP2P()
+		If Not _handle Then Return Null
+		Return TEOSP2P._Create(Self, bmx_eos_platform_get_p2p_interface(_handle))
 	End Method
 
 	Rem
@@ -1915,6 +2189,399 @@ Type TEOSPresenceSetRequest
 	Method IsComplete:Int()
 		Return _complete
 	End Method
+End Type
+
+Type TEOSLobbyCreateRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyCreateListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyCreateRequest(owner:TEOSPlatform, listener:IEOSLobbyCreateListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyCreateRequest = New TEOSLobbyCreateRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyCreateRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyCreateListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyCreate(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyCreateRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyDestroyRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyDestroyListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyDestroyRequest(owner:TEOSPlatform, listener:IEOSLobbyDestroyListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyDestroyRequest = New TEOSLobbyDestroyRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyDestroyRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyDestroyListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyDestroy(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyDestroyRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyLeaveRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyLeaveListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyLeaveRequest(owner:TEOSPlatform, listener:IEOSLobbyLeaveListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyLeaveRequest = New TEOSLobbyLeaveRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyLeaveRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyLeaveListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyLeave(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyLeaveRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyJoinRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _details:TEOSLobbyDetails
+	Field _listener:IEOSLobbyJoinListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyJoinRequest(owner:TEOSPlatform, details:TEOSLobbyDetails, listener:IEOSLobbyJoinListener)
+		If Not owner Or Not details Or Not listener Then Return Null
+		Local request:TEOSLobbyJoinRequest = New TEOSLobbyJoinRequest
+		request._owner = owner
+		request._details = details
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyJoinRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyJoinListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._details = Null
+		If listener Then listener.OnEOSLobbyJoin(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyJoinRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbySearchFindRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _search:TEOSLobbySearch
+	Field _listener:IEOSLobbySearchFindListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbySearchFindRequest(owner:TEOSPlatform, search:TEOSLobbySearch, listener:IEOSLobbySearchFindListener)
+		If Not owner Or Not search Or Not listener Then Return Null
+		Local request:TEOSLobbySearchFindRequest = New TEOSLobbySearchFindRequest
+		request._owner = owner
+		request._search = search
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbySearchFindRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbySearchFindListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._search = Null
+		If listener Then listener.OnEOSLobbySearchFind(result)
+	End Function
+
+	Function _Cancel(request:TEOSLobbySearchFindRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyUpdateRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyUpdateListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyUpdateRequest(owner:TEOSPlatform, listener:IEOSLobbyUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyUpdateRequest = New TEOSLobbyUpdateRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyUpdateRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyUpdateListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyUpdate(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyUpdateRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbySendInviteRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbySendInviteListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbySendInviteRequest(owner:TEOSPlatform, listener:IEOSLobbySendInviteListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbySendInviteRequest = New TEOSLobbySendInviteRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbySendInviteRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbySendInviteListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbySendInvite(result, lobbyId)
+	End Function
+	Function _Cancel(request:TEOSLobbySendInviteRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyRejectInviteRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyRejectInviteListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbyRejectInviteRequest(owner:TEOSPlatform, listener:IEOSLobbyRejectInviteListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyRejectInviteRequest = New TEOSLobbyRejectInviteRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbyRejectInviteRequest, result:EEOSResult, inviteId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyRejectInviteListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyRejectInvite(result, inviteId)
+	End Function
+	Function _Cancel(request:TEOSLobbyRejectInviteRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyQueryInvitesRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyQueryInvitesListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbyQueryInvitesRequest(owner:TEOSPlatform, listener:IEOSLobbyQueryInvitesListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyQueryInvitesRequest = New TEOSLobbyQueryInvitesRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbyQueryInvitesRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyQueryInvitesListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyQueryInvites(result, TEOSProductUserId._Create(localUserHandle))
+	End Function
+	Function _Cancel(request:TEOSLobbyQueryInvitesRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyUpdateReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyUpdateReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyUpdateReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyUpdateReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyUpdateReceivedSubscription = New TEOSLobbyUpdateReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyUpdateReceivedSubscription, lobbyId:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyUpdateReceived(lobbyId)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyUpdateReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyMemberUpdateReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyMemberUpdateReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyMemberUpdateReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyMemberUpdateReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberUpdateReceivedSubscription = New TEOSLobbyMemberUpdateReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyMemberUpdateReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberUpdateReceived(lobbyId, TEOSProductUserId._Create(targetHandle))
+	End Function
+	Function _Cancel(subscription:TEOSLobbyMemberUpdateReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyMemberStatusReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyMemberStatusReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyMemberStatusReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyMemberStatusReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberStatusReceivedSubscription = New TEOSLobbyMemberStatusReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyMemberStatusReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr, status:EEOSLobbyMemberStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberStatusReceived(lobbyId, TEOSProductUserId._Create(targetHandle), status)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyMemberStatusReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyInviteReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyInviteReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyInviteReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteReceivedSubscription = New TEOSLobbyInviteReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyInviteReceivedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteReceived(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle))
+	End Function
+	Function _Cancel(subscription:TEOSLobbyInviteReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyInviteAcceptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyInviteAcceptedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyInviteAcceptedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteAcceptedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteAcceptedSubscription = New TEOSLobbyInviteAcceptedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyInviteAcceptedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr, lobbyId:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteAccepted(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle), lobbyId)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyInviteAcceptedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
 End Type
 
 Type TEOSPresenceChangedSubscription
@@ -2880,6 +3547,820 @@ Type TEOSPresenceModification
 	End Method
 End Type
 
+Rem
+bbdoc: EOS game-services lobby access for one platform.
+End Rem
+Type TEOSLobby
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobby(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local lobby:TEOSLobby = New TEOSLobby
+		lobby._owner = owner
+		lobby._handle = handle
+		Return lobby
+	End Function
+
+	Rem
+	bbdoc: Creates a lobby and joins the local Product User as its owner.
+	End Rem
+	Method Create:TEOSLobbyCreateRequest(options:TEOSLobbyCreateOptions, listener:IEOSLobbyCreateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.LocalUserId Or Not options.LocalUserId.IsValid() Or Not listener Then Return Null
+		If options.MaxMembers < 1 Or options.MaxMembers > 64 Or Not options.BucketId Then Return Null
+		Local request:TEOSLobbyCreateRequest = TEOSLobbyCreateRequest._Create(_owner, listener)
+		bmx_eos_lobby_create(_owner._NativeHandle(), _handle, request, options.LocalUserId._NativeHandle(), options.MaxMembers, options.PermissionLevel, options.PresenceEnabled, options.AllowInvites, options.BucketId, options.DisableHostMigration, options.EnableRTCRoom, options.EnableJoinById, options.RejoinAfterKickRequiresInvite, options.CrossplayOptOut)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Destroys a lobby owned by the local Product User.
+	End Rem
+	Method Destroy:TEOSLobbyDestroyRequest(localUserId:TEOSProductUserId, lobbyId:String, listener:IEOSLobbyDestroyListener)
+		If Not _ValidUser(localUserId) Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbyDestroyRequest = TEOSLobbyDestroyRequest._Create(_owner, listener)
+		bmx_eos_lobby_destroy(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), lobbyId)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Leaves a lobby as a non-owner. Owners should destroy the lobby or transfer ownership first.
+	End Rem
+	Method Leave:TEOSLobbyLeaveRequest(localUserId:TEOSProductUserId, lobbyId:String, listener:IEOSLobbyLeaveListener)
+		If Not _ValidUser(localUserId) Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbyLeaveRequest = TEOSLobbyLeaveRequest._Create(_owner, listener)
+		bmx_eos_lobby_leave(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), lobbyId)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Joins the lobby represented by a details handle copied from a completed search.
+	End Rem
+	Method Join:TEOSLobbyJoinRequest(options:TEOSLobbyJoinOptions, listener:IEOSLobbyJoinListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.LocalUserId Or Not options.LocalUserId.IsValid() Or Not options.Details Or Not options.Details.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbyJoinRequest = TEOSLobbyJoinRequest._Create(_owner, options.Details, listener)
+		bmx_eos_lobby_join(_owner._NativeHandle(), _handle, request, options.Details._NativeHandle(), options.LocalUserId._NativeHandle(), options.PresenceEnabled, options.CrossplayOptOut)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Creates an owned lobby search with room for up to maxResults results.
+	End Rem
+	Method CreateSearch:EEOSResult(maxResults:UInt, search:TEOSLobbySearch Var)
+		search = Null
+		If Not _owner Or Not _owner.IsValid() Or maxResults < 1 Or maxResults > 200 Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_create_search(_handle, maxResults, handle)
+		If result = EEOSResult.Success Then search = TEOSLobbySearch._Create(_owner, handle)
+		Return result
+	End Method
+
+	Method CreateModification:EEOSResult(localUserId:TEOSProductUserId, lobbyId:String, modification:TEOSLobbyModification Var)
+		modification = Null
+		If Not _ValidUser(localUserId) Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_create_modification(_handle, localUserId._NativeHandle(), lobbyId, handle)
+		If result = EEOSResult.Success Then modification = TEOSLobbyModification._Create(_owner, handle)
+		Return result
+	End Method
+
+	Rem
+	bbdoc: Publishes a composed lobby or member update asynchronously.
+	about: The modification may be released immediately after this method returns.
+	End Rem
+	Method Update:TEOSLobbyUpdateRequest(modification:TEOSLobbyModification, listener:IEOSLobbyUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not modification Or Not modification.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbyUpdateRequest = TEOSLobbyUpdateRequest._Create(_owner, listener)
+		bmx_eos_lobby_update(_owner._NativeHandle(), _handle, request, modification._NativeHandle())
+		Return request
+	End Method
+
+	Method SendInvite:TEOSLobbySendInviteRequest(lobbyId:String, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId, listener:IEOSLobbySendInviteListener)
+		If Not _ValidUser(localUserId) Or Not targetUserId Or Not targetUserId.IsValid() Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbySendInviteRequest = TEOSLobbySendInviteRequest._Create(_owner, listener)
+		bmx_eos_lobby_send_invite(_owner._NativeHandle(), _handle, request, lobbyId, localUserId._NativeHandle(), targetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method RejectInvite:TEOSLobbyRejectInviteRequest(inviteId:String, localUserId:TEOSProductUserId, listener:IEOSLobbyRejectInviteListener)
+		If Not _ValidUser(localUserId) Or Not inviteId Or Not listener Then Return Null
+		Local request:TEOSLobbyRejectInviteRequest = TEOSLobbyRejectInviteRequest._Create(_owner, listener)
+		bmx_eos_lobby_reject_invite(_owner._NativeHandle(), _handle, request, inviteId, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method QueryInvites:TEOSLobbyQueryInvitesRequest(localUserId:TEOSProductUserId, listener:IEOSLobbyQueryInvitesListener)
+		If Not _ValidUser(localUserId) Or Not listener Then Return Null
+		Local request:TEOSLobbyQueryInvitesRequest = TEOSLobbyQueryInvitesRequest._Create(_owner, listener)
+		bmx_eos_lobby_query_invites(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method InviteCount:UInt(localUserId:TEOSProductUserId)
+		If Not _ValidUser(localUserId) Then Return 0
+		Return bmx_eos_lobby_get_invite_count(_handle, localUserId._NativeHandle())
+	End Method
+
+	Method InviteIdByIndex:EEOSResult(localUserId:TEOSProductUserId, index:UInt, inviteId:String Var)
+		inviteId = ""
+		If Not _ValidUser(localUserId) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_get_invite_id_by_index(_handle, localUserId._NativeHandle(), index, inviteId)
+	End Method
+
+	Method CopyDetailsByInviteId:EEOSResult(inviteId:String, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not _owner Or Not _owner.IsValid() Or Not inviteId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_copy_details_by_invite(_handle, inviteId, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
+	Method AddNotifyLobbyUpdateReceived:TEOSLobbyUpdateReceivedSubscription(listener:IEOSLobbyUpdateReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyUpdateReceivedSubscription = TEOSLobbyUpdateReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyMemberUpdateReceived:TEOSLobbyMemberUpdateReceivedSubscription(listener:IEOSLobbyMemberUpdateReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberUpdateReceivedSubscription = TEOSLobbyMemberUpdateReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_member_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyMemberStatusReceived:TEOSLobbyMemberStatusReceivedSubscription(listener:IEOSLobbyMemberStatusReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberStatusReceivedSubscription = TEOSLobbyMemberStatusReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_member_status(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteReceived:TEOSLobbyInviteReceivedSubscription(listener:IEOSLobbyInviteReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteReceivedSubscription = TEOSLobbyInviteReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_invite_received(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteAccepted:TEOSLobbyInviteAcceptedSubscription(listener:IEOSLobbyInviteAcceptedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteAcceptedSubscription = TEOSLobbyInviteAcceptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_invite_accepted(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Rem
+	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
+	End Rem
+	Method CopyDetails:EEOSResult(localUserId:TEOSProductUserId, lobbyId:String, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not _ValidUser(localUserId) Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_copy_details(_handle, localUserId._NativeHandle(), lobbyId, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
+	Private
+	Method _ValidUser:Int(localUserId:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned collection of lobby and local-member changes.
+End Rem
+Type TEOSLobbyModification
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbyModification(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local modification:TEOSLobbyModification = New TEOSLobbyModification
+		modification._owner = owner
+		modification._handle = handle
+		Return modification
+	End Function
+
+	Method SetBucketId:EEOSResult(bucketId:String)
+		If Not IsValid() Or Not bucketId Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_set_bucket(_handle, bucketId)
+	End Method
+
+	Method SetPermissionLevel:EEOSResult(permissionLevel:EEOSLobbyPermissionLevel)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_lobby_modification_set_permission(_handle, permissionLevel)
+	End Method
+
+	Method SetMaxMembers:EEOSResult(maxMembers:UInt)
+		If Not IsValid() Or maxMembers < 1 Or maxMembers > 64 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_set_max_members(_handle, maxMembers)
+	End Method
+
+	Method SetInvitesAllowed:EEOSResult(allowInvites:Int)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_lobby_modification_set_invites(_handle, allowInvites)
+	End Method
+
+	Method AddStringAttribute:EEOSResult(key:String, value:String, visibility:EEOSLobbyAttributeVisibility = EEOSLobbyAttributeVisibility.Public)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_add_string_attribute(_handle, key, value, visibility)
+	End Method
+
+	Method RemoveAttribute:EEOSResult(key:String)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_remove_attribute(_handle, key, False)
+	End Method
+
+	Method AddStringMemberAttribute:EEOSResult(key:String, value:String, visibility:EEOSLobbyAttributeVisibility = EEOSLobbyAttributeVisibility.Public)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_add_string_member_attribute(_handle, key, value, visibility)
+	End Method
+
+	Method RemoveMemberAttribute:EEOSResult(key:String)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_modification_remove_attribute(_handle, key, True)
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_modification_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned configurable lobby search and its most recent results.
+about: Set exactly one search mode: a lobby ID, target Product User, or one or
+more parameters. Release the search before releasing its platform.
+End Rem
+Type TEOSLobbySearch
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbySearch(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local search:TEOSLobbySearch = New TEOSLobbySearch
+		search._owner = owner
+		search._handle = handle
+		Return search
+	End Function
+
+	Method SetLobbyId:EEOSResult(lobbyId:String)
+		If Not IsValid() Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_lobby_id(_handle, lobbyId)
+	End Method
+
+	Method SetTargetUserId:EEOSResult(targetUserId:TEOSProductUserId)
+		If Not IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_target_user(_handle, targetUserId._NativeHandle())
+	End Method
+
+	Rem
+	bbdoc: Adds a string-valued search parameter, such as key "bucket".
+	End Rem
+	Method SetStringParameter:EEOSResult(key:String, value:String, comparison:EEOSComparisonOp = EEOSComparisonOp.Equal)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_string_parameter(_handle, key, value, comparison)
+	End Method
+
+	Method SetMaxResults:EEOSResult(maxResults:UInt)
+		If Not IsValid() Or maxResults < 1 Or maxResults > 200 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_max_results(_handle, maxResults)
+	End Method
+
+	Method Find:TEOSLobbySearchFindRequest(localUserId:TEOSProductUserId, listener:IEOSLobbySearchFindListener)
+		If Not IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbySearchFindRequest = TEOSLobbySearchFindRequest._Create(_owner, Self, listener)
+		bmx_eos_lobby_search_find(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method ResultCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_search_get_result_count(_handle)
+	End Method
+
+	Method CopyResultByIndex:EEOSResult(index:UInt, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_search_copy_result(_handle, index, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_search_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned snapshot handle for one lobby.
+about: Release it before releasing its platform. Search and join support also use this handle.
+End Rem
+Type TEOSLobbyDetails
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbyDetails(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local details:TEOSLobbyDetails = New TEOSLobbyDetails
+		details._owner = owner
+		details._handle = handle
+		Return details
+	End Function
+
+	Method CopyInfo:EEOSResult(info:TEOSLobbyInfo Var)
+		info = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local lobbyId:String, ownerHandle:Byte Ptr, permissionLevel:EEOSLobbyPermissionLevel
+		Local availableSlots:UInt, maxMembers:UInt, allowInvites:Int, bucketId:String
+		Local allowHostMigration:Int, rtcRoomEnabled:Int, allowJoinById:Int
+		Local rejoinAfterKickRequiresInvite:Int, presenceEnabled:Int, allowedPlatformIds:Int[]
+		Local result:EEOSResult = bmx_eos_lobby_details_copy_info(_handle, lobbyId, ownerHandle, permissionLevel, availableSlots, maxMembers, allowInvites, bucketId, allowHostMigration, rtcRoomEnabled, allowJoinById, rejoinAfterKickRequiresInvite, presenceEnabled, allowedPlatformIds)
+		If result = EEOSResult.Success Then
+			info = New TEOSLobbyInfo
+			info.LobbyId = lobbyId
+			info.OwnerUserId = TEOSProductUserId._Create(ownerHandle)
+			info.PermissionLevel = permissionLevel
+			info.AvailableSlots = availableSlots
+			info.MaxMembers = maxMembers
+			info.AllowInvites = allowInvites
+			info.BucketId = bucketId
+			info.AllowHostMigration = allowHostMigration
+			info.RTCRoomEnabled = rtcRoomEnabled
+			info.AllowJoinById = allowJoinById
+			info.RejoinAfterKickRequiresInvite = rejoinAfterKickRequiresInvite
+			info.PresenceEnabled = presenceEnabled
+			info.AllowedPlatformIds = allowedPlatformIds
+		End If
+		Return result
+	End Method
+
+	Method MemberCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_details_get_member_count(_handle)
+	End Method
+
+	Method MemberByIndex:TEOSProductUserId(index:UInt)
+		If Not IsValid() Then Return Null
+		Return TEOSProductUserId._Create(bmx_eos_lobby_details_get_member_by_index(_handle, index))
+	End Method
+
+	Method AttributeCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_details_get_attribute_count(_handle)
+	End Method
+
+	Method CopyAttributeByIndex:EEOSResult(index:UInt, attribute:TEOSLobbyAttribute Var)
+		attribute = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local key:String, valueType:EEOSLobbyAttributeType, intValue:Long, doubleValue:Double
+		Local boolValue:Int, stringValue:String, visibility:EEOSLobbyAttributeVisibility
+		Local result:EEOSResult = bmx_eos_lobby_details_copy_attribute_by_index(_handle, index, key, valueType, intValue, doubleValue, boolValue, stringValue, visibility)
+		If result = EEOSResult.Success Then
+			attribute = New TEOSLobbyAttribute
+			attribute.Key = key
+			attribute.ValueType = valueType
+			attribute.IntValue = intValue
+			attribute.DoubleValue = doubleValue
+			attribute.BoolValue = boolValue
+			attribute.StringValue = stringValue
+			attribute.Visibility = visibility
+		End If
+		Return result
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_details_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
+	End Method
+End Type
+
+Rem
+bbdoc: EOS peer-to-peer packet transport for one platform.
+about: Socket names are application-defined identifiers of 1 to 32 permitted
+characters. Packet payloads are limited to #EOS_P2P_MAX_PACKET_SIZE bytes.
+End Rem
+Type TEOSP2PQueryNATTypeRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PQueryNATTypeListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSP2PQueryNATTypeRequest(owner:TEOSPlatform, listener:IEOSP2PQueryNATTypeListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSP2PQueryNATTypeRequest = New TEOSP2PQueryNATTypeRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSP2PQueryNATTypeRequest, result:EEOSResult, natType:EEOSNATType) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSP2PQueryNATTypeListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSP2PQueryNATType(result, natType)
+	End Function
+
+	Function _Cancel(request:TEOSP2PQueryNATTypeRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, EEOSNATType.Unknown)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSP2PConnectionRequestSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionRequestListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionRequestSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionRequestListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionRequestSubscription = New TEOSP2PConnectionRequestSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionRequestSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionRequest(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionRequestSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionEstablishedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionEstablishedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionEstablishedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionEstablishedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionEstablishedSubscription = New TEOSP2PConnectionEstablishedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionEstablishedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String, connectionType:EEOSConnectionEstablishedType, networkType:EEOSNetworkConnectionType) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionEstablished(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName, connectionType, networkType)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionEstablishedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionInterruptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionInterruptedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionInterruptedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionInterruptedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionInterruptedSubscription = New TEOSP2PConnectionInterruptedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionInterruptedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionInterrupted(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionInterruptedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionClosedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionClosedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionClosedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionClosedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionClosedSubscription = New TEOSP2PConnectionClosedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionClosedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String, reason:EEOSConnectionClosedReason) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionClosed(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName, reason)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionClosedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PIncomingPacketQueueFullSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PIncomingPacketQueueFullListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PIncomingPacketQueueFullSubscription(owner:TEOSPlatform, listener:IEOSP2PIncomingPacketQueueFullListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PIncomingPacketQueueFullSubscription = New TEOSP2PIncomingPacketQueueFullSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PIncomingPacketQueueFullSubscription, maxSizeBytes:ULong, currentSizeBytes:ULong, localUserHandle:Byte Ptr, channel:Int, packetSizeBytes:UInt) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PIncomingPacketQueueFull(maxSizeBytes, currentSizeBytes, TEOSProductUserId._Create(localUserHandle), channel, packetSizeBytes)
+	End Function
+	Function _Cancel(subscription:TEOSP2PIncomingPacketQueueFullSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2P
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSP2P(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local p2p:TEOSP2P = New TEOSP2P
+		p2p._owner = owner
+		p2p._handle = handle
+		Return p2p
+	End Function
+
+	Method SendPacket:EEOSResult(options:TEOSP2PSendOptions)
+		If Not options Or Not _ValidUsers(options.LocalUserId, options.RemoteUserId) Then Return EEOSResult.InvalidParameters
+		If Not _ValidSocket(options.SocketName) Or options.Channel < 0 Or options.Channel > 255 Then Return EEOSResult.InvalidParameters
+		If options.Data And options.Data.Length > EOS_P2P_MAX_PACKET_SIZE Then Return EEOSResult.LimitExceeded
+		Return bmx_eos_p2p_send(_handle, options.LocalUserId._NativeHandle(), options.RemoteUserId._NativeHandle(), options.SocketName, options.Channel, options.Data, options.AllowDelayedDelivery, options.Reliability, options.DisableAutoAcceptConnection)
+	End Method
+
+	Rem
+	bbdoc: Returns the byte size of the next queued packet without removing it.
+	about: Pass -1 for requestedChannel to inspect the next packet on any channel.
+	End Rem
+	Method NextReceivedPacketSize:EEOSResult(localUserId:TEOSProductUserId, requestedChannel:Int, packetSize:UInt Var)
+		packetSize = 0
+		If Not _ValidLocalUser(localUserId) Or requestedChannel < -1 Or requestedChannel > 255 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_next_packet_size(_handle, localUserId._NativeHandle(), requestedChannel, packetSize)
+	End Method
+
+	Rem
+	bbdoc: Removes and copies the next queued packet on any or one requested channel.
+	End Rem
+	Method ReceivePacket:EEOSResult(localUserId:TEOSProductUserId, requestedChannel:Int, packet:TEOSP2PPacket Var)
+		packet = Null
+		If Not _ValidLocalUser(localUserId) Or requestedChannel < -1 Or requestedChannel > 255 Then Return EEOSResult.InvalidParameters
+		Local remoteHandle:Byte Ptr, socketName:String, channel:Int, data:Byte[]
+		Local result:EEOSResult = bmx_eos_p2p_receive(_handle, localUserId._NativeHandle(), requestedChannel, remoteHandle, socketName, channel, data)
+		If result = EEOSResult.Success Then
+			packet = New TEOSP2PPacket
+			packet.RemoteUserId = TEOSProductUserId._Create(remoteHandle)
+			packet.SocketName = socketName
+			packet.Channel = channel
+			packet.Data = data
+		End If
+		Return result
+	End Method
+
+	Method AcceptConnection:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_accept(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method CloseConnection:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_close(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method CloseConnections:EEOSResult(localUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidLocalUser(localUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_close_socket(_handle, localUserId._NativeHandle(), socketName)
+	End Method
+
+	Rem
+	bbdoc: Starts an asynchronous query of the local network's NAT type.
+	End Rem
+	Method QueryNATType:TEOSP2PQueryNATTypeRequest(listener:IEOSP2PQueryNATTypeListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local request:TEOSP2PQueryNATTypeRequest = TEOSP2PQueryNATTypeRequest._Create(_owner, listener)
+		bmx_eos_p2p_query_nat_type(_owner._NativeHandle(), _handle, request)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Returns the most recently queried local NAT type.
+	End Rem
+	Method GetNATType:EEOSResult(natType:EEOSNATType Var)
+		natType = EEOSNATType.Unknown
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_nat_type(_handle, natType)
+	End Method
+
+	Method SetRelayControl:EEOSResult(relayControl:EEOSRelayControl)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		If relayControl < EEOSRelayControl.NoRelays Or relayControl > EEOSRelayControl.ForceRelays Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_set_relay_control(_handle, relayControl)
+	End Method
+
+	Method GetRelayControl:EEOSResult(relayControl:EEOSRelayControl Var)
+		relayControl = EEOSRelayControl.AllowRelays
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_relay_control(_handle, relayControl)
+	End Method
+
+	Rem
+	bbdoc: Sets the preferred UDP port and the number of consecutive fallback ports.
+	about: Pass zero for both values to let the operating system select a port.
+	End Rem
+	Method SetPortRange:EEOSResult(port:Int, maxAdditionalPortsToTry:Int)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		If port < 0 Or port > 65535 Or maxAdditionalPortsToTry < 0 Or maxAdditionalPortsToTry > 65535 Then Return EEOSResult.InvalidParameters
+		If port = 0 And maxAdditionalPortsToTry <> 0 Then Return EEOSResult.InvalidParameters
+		If port + maxAdditionalPortsToTry > 65535 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_set_port_range(_handle, port, maxAdditionalPortsToTry)
+	End Method
+
+	Method GetPortRange:EEOSResult(port:Int Var, maxAdditionalPortsToTry:Int Var)
+		port = 0
+		maxAdditionalPortsToTry = 0
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_get_port_range(_handle, port, maxAdditionalPortsToTry)
+	End Method
+
+	Rem
+	bbdoc: Sets the maximum byte size of the incoming and outgoing packet queues.
+	about: A value of #EOS_P2P_MAX_QUEUE_SIZE_UNLIMITED allows that queue to grow without a configured limit.
+	End Rem
+	Method SetPacketQueueSize:EEOSResult(incomingMaxSizeBytes:ULong, outgoingMaxSizeBytes:ULong)
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_p2p_set_packet_queue_size(_handle, incomingMaxSizeBytes, outgoingMaxSizeBytes)
+	End Method
+
+	Method GetPacketQueueInfo:EEOSResult(info:TEOSP2PPacketQueueInfo Var)
+		info = Null
+		If Not _owner Or Not _owner.IsValid() Then Return EEOSResult.InvalidState
+		Local incomingMax:ULong, incomingCurrent:ULong, incomingCount:ULong
+		Local outgoingMax:ULong, outgoingCurrent:ULong, outgoingCount:ULong
+		Local result:EEOSResult = bmx_eos_p2p_get_packet_queue_info(_handle, incomingMax, incomingCurrent, incomingCount, outgoingMax, outgoingCurrent, outgoingCount)
+		If result = EEOSResult.Success Then
+			info = New TEOSP2PPacketQueueInfo
+			info.IncomingMaxSizeBytes = incomingMax
+			info.IncomingCurrentSizeBytes = incomingCurrent
+			info.IncomingCurrentPacketCount = incomingCount
+			info.OutgoingMaxSizeBytes = outgoingMax
+			info.OutgoingCurrentSizeBytes = outgoingCurrent
+			info.OutgoingCurrentPacketCount = outgoingCount
+		End If
+		Return result
+	End Method
+
+	Method ClearPacketQueue:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_p2p_clear_packet_queue(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method AddNotifyIncomingPacketQueueFull:TEOSP2PIncomingPacketQueueFullSubscription(listener:IEOSP2PIncomingPacketQueueFullListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSP2PIncomingPacketQueueFullSubscription = TEOSP2PIncomingPacketQueueFullSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_incoming_queue_full(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionRequest:TEOSP2PConnectionRequestSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionRequestListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionRequestSubscription = TEOSP2PConnectionRequestSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_request(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionEstablished:TEOSP2PConnectionEstablishedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionEstablishedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionEstablishedSubscription = TEOSP2PConnectionEstablishedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_established(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionInterrupted:TEOSP2PConnectionInterruptedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionInterruptedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionInterruptedSubscription = TEOSP2PConnectionInterruptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_interrupted(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionClosed:TEOSP2PConnectionClosedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionClosedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionClosedSubscription = TEOSP2PConnectionClosedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_closed(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Private
+	Method _ValidLocalUser:Int(localUserId:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+
+	Method _ValidUsers:Int(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId)
+		Return _ValidLocalUser(localUserId) And remoteUserId And remoteUserId.IsValid()
+	End Method
+
+	Method _ValidSocket:Int(socketName:String)
+		Return socketName.Length >= 1 And socketName.Length <= 32
+	End Method
+
+	Method _ValidSubscription:Int(localUserId:TEOSProductUserId, socketName:String, hasListener:Int)
+		Return _ValidLocalUser(localUserId) And (Not socketName Or _ValidSocket(socketName)) And hasListener
+	End Method
+End Type
+
 Private
 
 Extern
@@ -2904,6 +4385,8 @@ Extern
 	Function bmx_eos_platform_get_user_info_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -2985,6 +4468,71 @@ Extern
 	Function bmx_eos_presence_set(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceSetRequest, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr)
 	Function bmx_eos_presence_add_notify_changed:ULong(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, subscription:TEOSPresenceChangedSubscription)
 	Function bmx_eos_presence_remove_notify_changed(id:ULong)
+
+	Function bmx_eos_lobby_create(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyCreateRequest, localUserHandle:Byte Ptr, maxMembers:UInt, permissionLevel:EEOSLobbyPermissionLevel, presenceEnabled:Int, allowInvites:Int, bucketId:String, disableHostMigration:Int, enableRTCRoom:Int, enableJoinById:Int, rejoinAfterKickRequiresInvite:Int, crossplayOptOut:Int)
+	Function bmx_eos_lobby_destroy(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyDestroyRequest, localUserHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_leave(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyLeaveRequest, localUserHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_join(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyJoinRequest, detailsHandle:Byte Ptr, localUserHandle:Byte Ptr, presenceEnabled:Int, crossplayOptOut:Int)
+	Function bmx_eos_lobby_create_search:EEOSResult(lobbyHandle:Byte Ptr, maxResults:UInt, searchHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_search_release(searchHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_set_lobby_id:EEOSResult(searchHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_search_set_target_user:EEOSResult(searchHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_set_string_parameter:EEOSResult(searchHandle:Byte Ptr, key:String, value:String, comparison:EEOSComparisonOp)
+	Function bmx_eos_lobby_search_set_max_results:EEOSResult(searchHandle:Byte Ptr, maxResults:UInt)
+	Function bmx_eos_lobby_search_find(platformHandle:Byte Ptr, searchHandle:Byte Ptr, request:TEOSLobbySearchFindRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_get_result_count:UInt(searchHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_copy_result:EEOSResult(searchHandle:Byte Ptr, index:UInt, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_copy_details:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, lobbyId:String, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_details_release(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_copy_info:EEOSResult(detailsHandle:Byte Ptr, lobbyId:String Var, ownerUserHandle:Byte Ptr Var, permissionLevel:EEOSLobbyPermissionLevel Var, availableSlots:UInt Var, maxMembers:UInt Var, allowInvites:Int Var, bucketId:String Var, allowHostMigration:Int Var, rtcRoomEnabled:Int Var, allowJoinById:Int Var, rejoinAfterKickRequiresInvite:Int Var, presenceEnabled:Int Var, allowedPlatformIds:Int[] Var)
+	Function bmx_eos_lobby_details_get_member_count:UInt(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_get_member_by_index:Byte Ptr(detailsHandle:Byte Ptr, index:UInt)
+	Function bmx_eos_lobby_create_modification:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, lobbyId:String, modificationHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_modification_release(modificationHandle:Byte Ptr)
+	Function bmx_eos_lobby_modification_set_bucket:EEOSResult(modificationHandle:Byte Ptr, bucketId:String)
+	Function bmx_eos_lobby_modification_set_permission:EEOSResult(modificationHandle:Byte Ptr, permissionLevel:EEOSLobbyPermissionLevel)
+	Function bmx_eos_lobby_modification_set_max_members:EEOSResult(modificationHandle:Byte Ptr, maxMembers:UInt)
+	Function bmx_eos_lobby_modification_set_invites:EEOSResult(modificationHandle:Byte Ptr, allowInvites:Int)
+	Function bmx_eos_lobby_modification_add_string_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, value:String, visibility:EEOSLobbyAttributeVisibility)
+	Function bmx_eos_lobby_modification_add_string_member_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, value:String, visibility:EEOSLobbyAttributeVisibility)
+	Function bmx_eos_lobby_modification_remove_attribute:EEOSResult(modificationHandle:Byte Ptr, key:String, member:Int)
+	Function bmx_eos_lobby_update(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyUpdateRequest, modificationHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_get_attribute_count:UInt(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_copy_attribute_by_index:EEOSResult(detailsHandle:Byte Ptr, index:UInt, key:String Var, valueType:EEOSLobbyAttributeType Var, intValue:Long Var, doubleValue:Double Var, boolValue:Int Var, stringValue:String Var, visibility:EEOSLobbyAttributeVisibility Var)
+	Function bmx_eos_lobby_send_invite(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbySendInviteRequest, lobbyId:String, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_reject_invite(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyRejectInviteRequest, inviteId:String, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_query_invites(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyQueryInvitesRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_get_invite_count:UInt(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_get_invite_id_by_index:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, index:UInt, inviteId:String Var)
+	Function bmx_eos_lobby_copy_details_by_invite:EEOSResult(lobbyHandle:Byte Ptr, inviteId:String, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_add_notify_update:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyUpdateReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_member_update:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyMemberUpdateReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_member_status:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyMemberStatusReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_invite_received:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_invite_accepted:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteAcceptedSubscription)
+	Function bmx_eos_lobby_remove_notify(id:ULong)
+
+	Function bmx_eos_p2p_send:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String, channel:Int, data:Byte[], allowDelayedDelivery:Int, reliability:EEOSPacketReliability, disableAutoAccept:Int)
+	Function bmx_eos_p2p_next_packet_size:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, requestedChannel:Int, packetSize:UInt Var)
+	Function bmx_eos_p2p_receive:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, requestedChannel:Int, remoteUserHandle:Byte Ptr Var, socketName:String Var, channel:Int Var, data:Byte[] Var)
+	Function bmx_eos_p2p_accept:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_close:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_close_socket:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_query_nat_type(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, request:TEOSP2PQueryNATTypeRequest)
+	Function bmx_eos_p2p_get_nat_type:EEOSResult(p2pHandle:Byte Ptr, natType:EEOSNATType Var)
+	Function bmx_eos_p2p_set_relay_control:EEOSResult(p2pHandle:Byte Ptr, relayControl:EEOSRelayControl)
+	Function bmx_eos_p2p_get_relay_control:EEOSResult(p2pHandle:Byte Ptr, relayControl:EEOSRelayControl Var)
+	Function bmx_eos_p2p_set_port_range:EEOSResult(p2pHandle:Byte Ptr, port:Int, maxAdditionalPortsToTry:Int)
+	Function bmx_eos_p2p_get_port_range:EEOSResult(p2pHandle:Byte Ptr, port:Int Var, maxAdditionalPortsToTry:Int Var)
+	Function bmx_eos_p2p_set_packet_queue_size:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong, outgoingMaxSizeBytes:ULong)
+	Function bmx_eos_p2p_get_packet_queue_info:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong Var, incomingCurrentSizeBytes:ULong Var, incomingCurrentPacketCount:ULong Var, outgoingMaxSizeBytes:ULong Var, outgoingCurrentSizeBytes:ULong Var, outgoingCurrentPacketCount:ULong Var)
+	Function bmx_eos_p2p_clear_packet_queue:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_incoming_queue_full:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PIncomingPacketQueueFullSubscription)
+	Function bmx_eos_p2p_add_notify_connection_request:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionRequestSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_established:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionEstablishedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_interrupted:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionInterruptedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_closed:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionClosedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_remove_notify(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
