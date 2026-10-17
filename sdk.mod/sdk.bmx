@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.12.0"
+ModuleInfo "Version: 0.13.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -39,6 +39,8 @@ ModuleInfo "History: 0.11.0"
 ModuleInfo "History: Added Presence queries and cached presence copies."
 ModuleInfo "History: 0.12.0"
 ModuleInfo "History: Added Presence status, rich-text, and join-info publishing."
+ModuleInfo "History: 0.13.0"
+ModuleInfo "History: Added friend-status and blocklist-update notifications."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -686,6 +688,14 @@ End Interface
 
 Interface IEOSFriendsQueryListener
 	Method OnEOSFriendsQuery(result:EEOSResult, localUserId:TEOSEpicAccountId)
+End Interface
+
+Interface IEOSFriendsUpdateListener
+	Method OnEOSFriendsUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, previousStatus:EEOSFriendsStatus, currentStatus:EEOSFriendsStatus)
+End Interface
+
+Interface IEOSBlockedUsersUpdateListener
+	Method OnEOSBlockedUsersUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, blocked:Int)
 End Interface
 
 Interface IEOSPresenceQueryListener
@@ -1619,6 +1629,98 @@ Type TEOSFriendsQueryRequest
 	End Method
 End Type
 
+Type TEOSFriendsUpdateSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSFriendsUpdateListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSFriendsUpdateSubscription(owner:TEOSPlatform, listener:IEOSFriendsUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSFriendsUpdateSubscription = New TEOSFriendsUpdateSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSFriendsUpdateSubscription, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, previousStatus:EEOSFriendsStatus, currentStatus:EEOSFriendsStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSFriendsUpdate(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), previousStatus, currentStatus)
+	End Function
+
+	Function _Cancel(subscription:TEOSFriendsUpdateSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_friends_remove_notify(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSBlockedUsersUpdateSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSBlockedUsersUpdateListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSBlockedUsersUpdateSubscription(owner:TEOSPlatform, listener:IEOSBlockedUsersUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSBlockedUsersUpdateSubscription = New TEOSBlockedUsersUpdateSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSBlockedUsersUpdateSubscription, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, blocked:Int) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSBlockedUsersUpdate(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), blocked)
+	End Function
+
+	Function _Cancel(subscription:TEOSBlockedUsersUpdateSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_friends_remove_notify(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Type TEOSPresenceQueryRequest
 	Private
 	Field _owner:TEOSPlatform
@@ -2392,6 +2494,22 @@ Type TEOSFriends
 		Return TEOSEpicAccountId._Create(bmx_eos_friends_get_blocked_by_index(_handle, localUserId._NativeHandle(), index))
 	End Method
 
+	Method AddNotifyFriendsUpdate:TEOSFriendsUpdateSubscription(listener:IEOSFriendsUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSFriendsUpdateSubscription = TEOSFriendsUpdateSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_friends_add_notify_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyBlockedUsersUpdate:TEOSBlockedUsersUpdateSubscription(listener:IEOSBlockedUsersUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSBlockedUsersUpdateSubscription = TEOSBlockedUsersUpdateSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_friends_add_notify_blocked(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
 	Private
 	Method _ValidUser:Int(localUserId:TEOSEpicAccountId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
@@ -2624,6 +2742,9 @@ Extern
 	Function bmx_eos_friends_get_status:EEOSFriendsStatus(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_count:Int(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_by_index:Byte Ptr(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:Int)
+	Function bmx_eos_friends_add_notify_update:ULong(platformHandle:Byte Ptr, friendsHandle:Byte Ptr, subscription:TEOSFriendsUpdateSubscription)
+	Function bmx_eos_friends_add_notify_blocked:ULong(platformHandle:Byte Ptr, friendsHandle:Byte Ptr, subscription:TEOSBlockedUsersUpdateSubscription)
+	Function bmx_eos_friends_remove_notify(id:ULong)
 
 	Function bmx_eos_presence_query(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_presence_has:Int(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)

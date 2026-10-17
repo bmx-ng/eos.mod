@@ -39,6 +39,8 @@ external-account records can be counted and copied by index, type, or ID.
 
 Platform.Friends() queries the signed-in Epic account's friends and blocklist.
 The cached IDs can be enumerated and their current relationship status checked.
+Friend-status and blocklist subscriptions report later changes and must be
+removed when no longer needed; platform release removes any that remain.
 
 Platform.Presence() queries the local user or an Epic friend. Cached status,
 rich text, product information, and custom key/value records are copied into

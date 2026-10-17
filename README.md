@@ -16,7 +16,7 @@ The current foundation covers:
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
 - Leaderboard definition, ranked-record, and multi-user score queries
 - User Info account, display-name, and external-account queries with copied cache access
-- Friends list, blocklist, and relationship-status queries
+- Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries and publishing, with copied status, rich text, product details, and data records
 - retained asynchronous requests with terminal-result and platform-release handling
 
@@ -92,7 +92,8 @@ display name or by a linked external account.
 
 The [`friends.bmx`](sdk.mod/examples/friends.bmx) example requests the Friends
 List Auth scope, queries the signed-in account's friends and blocklist, and
-prints each cached relationship status.
+prints each cached relationship status. It also registers removable friend and
+blocklist update subscriptions for the lifetime of the example.
 
 The [`presence.bmx`](sdk.mod/examples/presence.bmx) example requests the
 Presence Auth scope, queries the signed-in account, and copies its cached status,

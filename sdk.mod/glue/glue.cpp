@@ -64,6 +64,10 @@ void eos_sdk_TEOSPresenceQueryRequest__Complete(BBObject *, EOS_EResult, EOS_Epi
 void eos_sdk_TEOSPresenceQueryRequest__Cancel(BBObject *);
 void eos_sdk_TEOSPresenceSetRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EResult);
 void eos_sdk_TEOSPresenceSetRequest__Cancel(BBObject *);
+void eos_sdk_TEOSFriendsUpdateSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_EpicAccountId, EOS_EFriendsStatus, EOS_EFriendsStatus);
+void eos_sdk_TEOSFriendsUpdateSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSBlockedUsersUpdateSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_EpicAccountId, int);
+void eos_sdk_TEOSBlockedUsersUpdateSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -219,6 +223,24 @@ struct AchievementNotificationContext {
 
 std::vector<AchievementNotificationContext *> g_achievementNotifications;
 
+enum class FriendsNotificationKind { FriendsUpdate, BlockedUsersUpdate };
+
+struct FriendsNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HFriends friends;
+	EOS_NotificationId id;
+	FriendsNotificationKind kind;
+	BBObject *subscription;
+
+	FriendsNotificationContext(EOS_HPlatform platform, EOS_HFriends friends,
+		FriendsNotificationKind kind, BBObject *subscription)
+		: platform(platform), friends(friends), id(EOS_INVALID_NOTIFICATIONID),
+		  kind(kind), subscription(subscription) { BBRETAIN(subscription); }
+	~FriendsNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<FriendsNotificationContext *> g_friendsNotifications;
+
 void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	if (!context) return;
 	if (context->id != EOS_INVALID_NOTIFICATIONID) {
@@ -226,6 +248,20 @@ void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	}
 	auto found = std::find(g_achievementNotifications.begin(), g_achievementNotifications.end(), context);
 	if (found != g_achievementNotifications.end()) g_achievementNotifications.erase(found);
+	delete context;
+}
+
+void RemoveFriendsNotification(FriendsNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		if (context->kind == FriendsNotificationKind::FriendsUpdate) {
+			EOS_Friends_RemoveNotifyFriendsUpdate(context->friends, context->id);
+		} else {
+			EOS_Friends_RemoveNotifyBlockedUsersUpdate(context->friends, context->id);
+		}
+	}
+	auto found = std::find(g_friendsNotifications.begin(), g_friendsNotifications.end(), context);
+	if (found != g_friendsNotifications.end()) g_friendsNotifications.erase(found);
 	delete context;
 }
 
@@ -238,6 +274,21 @@ void CancelPlatformNotifications(EOS_HPlatform platform) {
 			EOS_Achievements_RemoveNotifyAchievementsUnlocked(context->achievements, context->id);
 		}
 		eos_sdk_TEOSAchievementsUnlockedSubscription__Cancel(context->subscription);
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_friendsNotifications.size();) {
+		auto *context = g_friendsNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_friendsNotifications.erase(g_friendsNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			if (context->kind == FriendsNotificationKind::FriendsUpdate) {
+				EOS_Friends_RemoveNotifyFriendsUpdate(context->friends, context->id);
+				eos_sdk_TEOSFriendsUpdateSubscription__Cancel(context->subscription);
+			} else {
+				EOS_Friends_RemoveNotifyBlockedUsersUpdate(context->friends, context->id);
+				eos_sdk_TEOSBlockedUsersUpdateSubscription__Cancel(context->subscription);
+			}
+		}
 		delete context;
 	}
 }
@@ -516,6 +567,20 @@ void EOS_CALL FriendsQueryCallback(const EOS_Friends_QueryFriendsCallbackInfo *d
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSFriendsQueryRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
 	if (terminal) delete context;
+}
+
+void EOS_CALL FriendsUpdateCallback(const EOS_Friends_OnFriendsUpdateInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<FriendsNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSFriendsUpdateSubscription__Notify(context->subscription, data->LocalUserId,
+		data->TargetUserId, data->PreviousStatus, data->CurrentStatus);
+}
+
+void EOS_CALL BlockedUsersUpdateCallback(const EOS_Friends_OnBlockedUsersUpdateInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<FriendsNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSBlockedUsersUpdateSubscription__Notify(context->subscription, data->LocalUserId,
+		data->TargetUserId, data->bBlocked == EOS_TRUE);
 }
 
 void EOS_CALL PresenceQueryCallback(const EOS_Presence_QueryPresenceCallbackInfo *data) {
@@ -1434,6 +1499,36 @@ EOS_EpicAccountId bmx_eos_friends_get_blocked_by_index(EOS_HFriends friends,
 	options.LocalUserId = localUserId;
 	options.Index = index;
 	return EOS_Friends_GetBlockedUserAtIndex(friends, &options);
+}
+
+uint64_t bmx_eos_friends_add_notify_update(EOS_HPlatform platform, EOS_HFriends friends,
+	BBObject *subscription) {
+	auto *context = new FriendsNotificationContext(platform, friends,
+		FriendsNotificationKind::FriendsUpdate, subscription);
+	EOS_Friends_AddNotifyFriendsUpdateOptions options{};
+	options.ApiVersion = EOS_FRIENDS_ADDNOTIFYFRIENDSUPDATE_API_LATEST;
+	context->id = EOS_Friends_AddNotifyFriendsUpdate(friends, &options, context, FriendsUpdateCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_friendsNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_friends_add_notify_blocked(EOS_HPlatform platform, EOS_HFriends friends,
+	BBObject *subscription) {
+	auto *context = new FriendsNotificationContext(platform, friends,
+		FriendsNotificationKind::BlockedUsersUpdate, subscription);
+	EOS_Friends_AddNotifyBlockedUsersUpdateOptions options{};
+	options.ApiVersion = EOS_FRIENDS_ADDNOTIFYBLOCKEDUSERSUPDATE_API_LATEST;
+	context->id = EOS_Friends_AddNotifyBlockedUsersUpdate(friends, &options, context, BlockedUsersUpdateCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_friendsNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_friends_remove_notify(uint64_t id) {
+	auto found = std::find_if(g_friendsNotifications.begin(), g_friendsNotifications.end(),
+		[id](const FriendsNotificationContext *context) { return context->id == id; });
+	if (found != g_friendsNotifications.end()) RemoveFriendsNotification(*found);
 }
 
 void bmx_eos_presence_query(EOS_HPlatform platform, EOS_HPresence presence,
