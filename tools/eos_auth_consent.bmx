@@ -38,7 +38,7 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener, IEOSLobbyCreateListener, IEOSLobbyUpdateListener, IEOSLobbyDestroyListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener, IEOSAuthLoginStatusListener, IEOSConnectAuthExpirationListener, IEOSConnectLoginStatusListener, IEOSLobbyCreateListener, IEOSLobbyUpdateListener, IEOSLobbyDestroyListener, IEOSLobbyUpdateReceivedListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field UserInfo:TEOSUserInfoInterface
@@ -85,6 +85,10 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field ActiveLobbyId:String
 	Field LobbyFailure:String
 	Field LobbyValidated:Int
+	Field LobbyUpdateObserved:Int
+	Field LobbyNotificationWaitUntil:Int
+	Field LobbyDestroyStarted:Int
+	Field LobbyUpdateSubscription:TEOSLobbyUpdateReceivedSubscription
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -387,6 +391,8 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	End Method
 
 	Method StartLobbyTest()
+		LobbyUpdateSubscription = Lobby.AddNotifyLobbyUpdateReceived(Self)
+		If Not LobbyUpdateSubscription Then Fail("Could not subscribe to Lobby updates", EEOSResult.InvalidState); Return
 		statusKind = 1
 		statusTitle = "Creating temporary EOS lobby..."
 		statusDetail = "The lobby will be updated, checked, and destroyed automatically."
@@ -436,10 +442,28 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		Next
 		details.Release()
 		If Not LobbyValidated Then LobbyFailure = "Published Lobby attribute was not found"
-		DestroyTestLobby()
+		If LobbyFailure Or LobbyUpdateObserved Then
+			DestroyTestLobby()
+		Else
+			LobbyNotificationWaitUntil = MilliSecs() + 3000
+			statusTitle = "Waiting for EOS lobby notification..."
+			statusDetail = "The update is validated; waiting for its change event."
+		End If
+	End Method
+
+	Method OnEOSLobbyUpdateReceived(lobbyId:String)
+		If lobbyId <> ActiveLobbyId Then Return
+		LobbyUpdateObserved = True
+		If LobbyValidated And LobbyNotificationWaitUntil Then
+			LobbyNotificationWaitUntil = 0
+			DestroyTestLobby()
+		End If
 	End Method
 
 	Method DestroyTestLobby()
+		If LobbyDestroyStarted Then Return
+		LobbyDestroyStarted = True
+		LobbyNotificationWaitUntil = 0
 		statusTitle = "Destroying temporary EOS lobby..."
 		statusDetail = ActiveLobbyId
 		If Not Lobby.Destroy(ProductUserId, ActiveLobbyId, Self) Then Fail("Could not start Lobby destruction", EEOSResult.InvalidState)
@@ -460,7 +484,7 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		done = True
 		statusKind = 2
 		statusTitle = "EOS lobby lifecycle completed"
-		statusDetail = "Created, updated, copied, validated, and destroyed the temporary lobby."
+		statusDetail = "Created, updated, notified, copied, validated, and destroyed the temporary lobby."
 	End Method
 
 	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
@@ -483,6 +507,12 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	End Method
 
 	Method Update()
+		If LobbyNotificationWaitUntil And MilliSecs() >= LobbyNotificationWaitUntil Then
+			LobbyNotificationWaitUntil = 0
+			LobbyFailure = "Lobby update notification was not received"
+			DestroyTestLobby()
+			Return
+		End If
 		If Not RefreshAt Or MilliSecs() < RefreshAt Then Return
 		RefreshAt = 0
 		RefreshAttempts :+ 1
@@ -774,6 +804,7 @@ Else
 			completedMainLoop = True
 			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
 			If listener.PresenceChangedSubscription Then listener.PresenceChangedSubscription.Remove()
+			If listener.LobbyUpdateSubscription Then listener.LobbyUpdateSubscription.Remove()
 			If listener.AuthStatusSubscription Then listener.AuthStatusSubscription.Remove()
 			If listener.ConnectExpirationSubscription Then listener.ConnectExpirationSubscription.Remove()
 			If listener.ConnectStatusSubscription Then listener.ConnectStatusSubscription.Remove()

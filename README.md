@@ -112,6 +112,8 @@ Owned modification objects publish lobby settings and searchable string
 attributes, plus local-member string attributes.
 Invitations can be sent, queried, enumerated, rejected, and converted into a
 lobby-details handle suitable for Join().
+Removable notifications report lobby updates, member-data updates, member
+join/leave status, received invitations, and accepted invitations.
 
 ## Status and roadmap
 

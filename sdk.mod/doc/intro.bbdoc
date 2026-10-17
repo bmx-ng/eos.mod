@@ -64,6 +64,9 @@ attributes without exposing SDK-owned memory.
 Lobby invitations can be sent and rejected asynchronously. QueryInvites()
 refreshes the local invite cache; enumerate its IDs and copy an invite's lobby
 details before joining it.
+Removable Lobby subscriptions report lobby and member changes, member status,
+and invitation receipt or acceptance. Platform release removes subscriptions
+that remain registered.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

@@ -95,6 +95,16 @@ void eos_sdk_TEOSLobbyRejectInviteRequest__Complete(BBObject *, EOS_EResult, BBS
 void eos_sdk_TEOSLobbyRejectInviteRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLobbyQueryInvitesRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
 void eos_sdk_TEOSLobbyQueryInvitesRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyUpdateReceivedSubscription__Notify(BBObject *, BBString *);
+void eos_sdk_TEOSLobbyUpdateReceivedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyMemberUpdateReceivedSubscription__Notify(BBObject *, BBString *, EOS_ProductUserId);
+void eos_sdk_TEOSLobbyMemberUpdateReceivedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyMemberStatusReceivedSubscription__Notify(BBObject *, BBString *, EOS_ProductUserId, EOS_ELobbyMemberStatus);
+void eos_sdk_TEOSLobbyMemberStatusReceivedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyInviteReceivedSubscription__Notify(BBObject *, BBString *, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSLobbyInviteReceivedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyInviteAcceptedSubscription__Notify(BBObject *, BBString *, EOS_ProductUserId, EOS_ProductUserId, BBString *);
+void eos_sdk_TEOSLobbyInviteAcceptedSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -338,6 +348,24 @@ struct LoginNotificationContext {
 
 std::vector<LoginNotificationContext *> g_loginNotifications;
 
+enum class LobbyNotificationKind { LobbyUpdate, MemberUpdate, MemberStatus, InviteReceived, InviteAccepted };
+
+struct LobbyNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HLobby lobby;
+	EOS_NotificationId id;
+	LobbyNotificationKind kind;
+	BBObject *subscription;
+
+	LobbyNotificationContext(EOS_HPlatform platform, EOS_HLobby lobby,
+		LobbyNotificationKind kind, BBObject *subscription)
+		: platform(platform), lobby(lobby), id(EOS_INVALID_NOTIFICATIONID), kind(kind),
+		  subscription(subscription) { BBRETAIN(subscription); }
+	~LobbyNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<LobbyNotificationContext *> g_lobbyNotifications;
+
 void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	if (!context) return;
 	if (context->id != EOS_INVALID_NOTIFICATIONID) {
@@ -389,6 +417,22 @@ void RemoveLoginNotification(LoginNotificationContext *context) {
 	}
 	auto found = std::find(g_loginNotifications.begin(), g_loginNotifications.end(), context);
 	if (found != g_loginNotifications.end()) g_loginNotifications.erase(found);
+	delete context;
+}
+
+void RemoveLobbyNotification(LobbyNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		switch (context->kind) {
+		case LobbyNotificationKind::LobbyUpdate: EOS_Lobby_RemoveNotifyLobbyUpdateReceived(context->lobby, context->id); break;
+		case LobbyNotificationKind::MemberUpdate: EOS_Lobby_RemoveNotifyLobbyMemberUpdateReceived(context->lobby, context->id); break;
+		case LobbyNotificationKind::MemberStatus: EOS_Lobby_RemoveNotifyLobbyMemberStatusReceived(context->lobby, context->id); break;
+		case LobbyNotificationKind::InviteReceived: EOS_Lobby_RemoveNotifyLobbyInviteReceived(context->lobby, context->id); break;
+		case LobbyNotificationKind::InviteAccepted: EOS_Lobby_RemoveNotifyLobbyInviteAccepted(context->lobby, context->id); break;
+		}
+	}
+	auto found = std::find(g_lobbyNotifications.begin(), g_lobbyNotifications.end(), context);
+	if (found != g_lobbyNotifications.end()) g_lobbyNotifications.erase(found);
 	delete context;
 }
 
@@ -446,6 +490,31 @@ void CancelPlatformNotifications(EOS_HPlatform platform) {
 				EOS_Connect_RemoveNotifyLoginStatusChanged(context->connect, context->id);
 				eos_sdk_TEOSConnectLoginStatusSubscription__Cancel(context->subscription);
 				break;
+			}
+		}
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_lobbyNotifications.size();) {
+		auto *context = g_lobbyNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_lobbyNotifications.erase(g_lobbyNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			switch (context->kind) {
+			case LobbyNotificationKind::LobbyUpdate:
+				EOS_Lobby_RemoveNotifyLobbyUpdateReceived(context->lobby, context->id);
+				eos_sdk_TEOSLobbyUpdateReceivedSubscription__Cancel(context->subscription); break;
+			case LobbyNotificationKind::MemberUpdate:
+				EOS_Lobby_RemoveNotifyLobbyMemberUpdateReceived(context->lobby, context->id);
+				eos_sdk_TEOSLobbyMemberUpdateReceivedSubscription__Cancel(context->subscription); break;
+			case LobbyNotificationKind::MemberStatus:
+				EOS_Lobby_RemoveNotifyLobbyMemberStatusReceived(context->lobby, context->id);
+				eos_sdk_TEOSLobbyMemberStatusReceivedSubscription__Cancel(context->subscription); break;
+			case LobbyNotificationKind::InviteReceived:
+				EOS_Lobby_RemoveNotifyLobbyInviteReceived(context->lobby, context->id);
+				eos_sdk_TEOSLobbyInviteReceivedSubscription__Cancel(context->subscription); break;
+			case LobbyNotificationKind::InviteAccepted:
+				EOS_Lobby_RemoveNotifyLobbyInviteAccepted(context->lobby, context->id);
+				eos_sdk_TEOSLobbyInviteAcceptedSubscription__Cancel(context->subscription); break;
 			}
 		}
 		delete context;
@@ -876,6 +945,42 @@ void EOS_CALL LobbyQueryInvitesCallback(const EOS_Lobby_QueryInvitesCallbackInfo
 	eos_sdk_TEOSLobbyQueryInvitesRequest__Complete(context->request, data->ResultCode,
 		data->LocalUserId);
 	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyUpdateReceivedCallback(const EOS_Lobby_LobbyUpdateReceivedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LobbyNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLobbyUpdateReceivedSubscription__Notify(context->subscription,
+		ToBBString(data->LobbyId));
+}
+
+void EOS_CALL LobbyMemberUpdateReceivedCallback(const EOS_Lobby_LobbyMemberUpdateReceivedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LobbyNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLobbyMemberUpdateReceivedSubscription__Notify(context->subscription,
+		ToBBString(data->LobbyId), data->TargetUserId);
+}
+
+void EOS_CALL LobbyMemberStatusReceivedCallback(const EOS_Lobby_LobbyMemberStatusReceivedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LobbyNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLobbyMemberStatusReceivedSubscription__Notify(context->subscription,
+		ToBBString(data->LobbyId), data->TargetUserId, data->CurrentStatus);
+}
+
+void EOS_CALL LobbyInviteReceivedCallback(const EOS_Lobby_LobbyInviteReceivedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LobbyNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLobbyInviteReceivedSubscription__Notify(context->subscription,
+		ToBBString(data->InviteId), data->LocalUserId, data->TargetUserId);
+}
+
+void EOS_CALL LobbyInviteAcceptedCallback(const EOS_Lobby_LobbyInviteAcceptedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<LobbyNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLobbyInviteAcceptedSubscription__Notify(context->subscription,
+		ToBBString(data->InviteId), data->LocalUserId, data->TargetUserId,
+		ToBBString(data->LobbyId));
 }
 
 } // namespace
@@ -2389,6 +2494,72 @@ EOS_EResult bmx_eos_lobby_copy_details_by_invite(EOS_HLobby lobby,
 	options.ApiVersion = EOS_LOBBY_COPYLOBBYDETAILSHANDLEBYINVITEID_API_LATEST;
 	options.InviteId = inviteId.required();
 	return EOS_Lobby_CopyLobbyDetailsHandleByInviteId(lobby, &options, detailsHandle);
+}
+
+uint64_t bmx_eos_lobby_add_notify_update(EOS_HPlatform platform, EOS_HLobby lobby,
+	BBObject *subscription) {
+	auto *context = new LobbyNotificationContext(platform, lobby,
+		LobbyNotificationKind::LobbyUpdate, subscription);
+	EOS_Lobby_AddNotifyLobbyUpdateReceivedOptions options{};
+	options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYUPDATERECEIVED_API_LATEST;
+	context->id = EOS_Lobby_AddNotifyLobbyUpdateReceived(lobby, &options, context, LobbyUpdateReceivedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_lobbyNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_lobby_add_notify_member_update(EOS_HPlatform platform, EOS_HLobby lobby,
+	BBObject *subscription) {
+	auto *context = new LobbyNotificationContext(platform, lobby,
+		LobbyNotificationKind::MemberUpdate, subscription);
+	EOS_Lobby_AddNotifyLobbyMemberUpdateReceivedOptions options{};
+	options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYMEMBERUPDATERECEIVED_API_LATEST;
+	context->id = EOS_Lobby_AddNotifyLobbyMemberUpdateReceived(lobby, &options, context, LobbyMemberUpdateReceivedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_lobbyNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_lobby_add_notify_member_status(EOS_HPlatform platform, EOS_HLobby lobby,
+	BBObject *subscription) {
+	auto *context = new LobbyNotificationContext(platform, lobby,
+		LobbyNotificationKind::MemberStatus, subscription);
+	EOS_Lobby_AddNotifyLobbyMemberStatusReceivedOptions options{};
+	options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYMEMBERSTATUSRECEIVED_API_LATEST;
+	context->id = EOS_Lobby_AddNotifyLobbyMemberStatusReceived(lobby, &options, context, LobbyMemberStatusReceivedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_lobbyNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_lobby_add_notify_invite_received(EOS_HPlatform platform, EOS_HLobby lobby,
+	BBObject *subscription) {
+	auto *context = new LobbyNotificationContext(platform, lobby,
+		LobbyNotificationKind::InviteReceived, subscription);
+	EOS_Lobby_AddNotifyLobbyInviteReceivedOptions options{};
+	options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYINVITERECEIVED_API_LATEST;
+	context->id = EOS_Lobby_AddNotifyLobbyInviteReceived(lobby, &options, context, LobbyInviteReceivedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_lobbyNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_lobby_add_notify_invite_accepted(EOS_HPlatform platform, EOS_HLobby lobby,
+	BBObject *subscription) {
+	auto *context = new LobbyNotificationContext(platform, lobby,
+		LobbyNotificationKind::InviteAccepted, subscription);
+	EOS_Lobby_AddNotifyLobbyInviteAcceptedOptions options{};
+	options.ApiVersion = EOS_LOBBY_ADDNOTIFYLOBBYINVITEACCEPTED_API_LATEST;
+	context->id = EOS_Lobby_AddNotifyLobbyInviteAccepted(lobby, &options, context, LobbyInviteAcceptedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_lobbyNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_lobby_remove_notify(uint64_t id) {
+	auto found = std::find_if(g_lobbyNotifications.begin(), g_lobbyNotifications.end(),
+		[id](const LobbyNotificationContext *context) { return context->id == id; });
+	if (found != g_lobbyNotifications.end()) RemoveLobbyNotification(*found);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

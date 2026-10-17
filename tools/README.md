@@ -82,7 +82,8 @@ open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer
 
 To test the Lobby lifecycle, use the isolated `lobby-write` mode. It creates an
 invite-only four-player lobby, publishes and copies a test attribute, verifies
-the owner and member snapshot, and then destroys the lobby:
+the owner and member snapshot, observes the lobby-update notification, and then
+destroys the lobby:
 
 ```sh
 open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer lobby-write

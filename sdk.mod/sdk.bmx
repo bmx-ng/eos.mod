@@ -360,6 +360,15 @@ Enum EEOSLobbyAttributeVisibility
 	PrivateValue = 1
 End Enum
 
+Enum EEOSLobbyMemberStatus
+	Joined = 0
+	Left = 1
+	Disconnected = 2
+	Kicked = 3
+	Promoted = 4
+	Closed = 5
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -857,6 +866,26 @@ End Interface
 
 Interface IEOSLobbyQueryInvitesListener
 	Method OnEOSLobbyQueryInvites(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyUpdateReceivedListener
+	Method OnEOSLobbyUpdateReceived(lobbyId:String)
+End Interface
+
+Interface IEOSLobbyMemberUpdateReceivedListener
+	Method OnEOSLobbyMemberUpdateReceived(lobbyId:String, targetUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyMemberStatusReceivedListener
+	Method OnEOSLobbyMemberStatusReceived(lobbyId:String, targetUserId:TEOSProductUserId, status:EEOSLobbyMemberStatus)
+End Interface
+
+Interface IEOSLobbyInviteReceivedListener
+	Method OnEOSLobbyInviteReceived(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSLobbyInviteAcceptedListener
+	Method OnEOSLobbyInviteAccepted(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId, lobbyId:String)
 End Interface
 
 Interface IEOSLogListener
@@ -2320,6 +2349,131 @@ Type TEOSLobbyQueryInvitesRequest
 	End Method
 End Type
 
+Type TEOSLobbyUpdateReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyUpdateReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyUpdateReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyUpdateReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyUpdateReceivedSubscription = New TEOSLobbyUpdateReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyUpdateReceivedSubscription, lobbyId:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyUpdateReceived(lobbyId)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyUpdateReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyMemberUpdateReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyMemberUpdateReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyMemberUpdateReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyMemberUpdateReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberUpdateReceivedSubscription = New TEOSLobbyMemberUpdateReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyMemberUpdateReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberUpdateReceived(lobbyId, TEOSProductUserId._Create(targetHandle))
+	End Function
+	Function _Cancel(subscription:TEOSLobbyMemberUpdateReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyMemberStatusReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyMemberStatusReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyMemberStatusReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyMemberStatusReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberStatusReceivedSubscription = New TEOSLobbyMemberStatusReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyMemberStatusReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr, status:EEOSLobbyMemberStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberStatusReceived(lobbyId, TEOSProductUserId._Create(targetHandle), status)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyMemberStatusReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyInviteReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyInviteReceivedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyInviteReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteReceivedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteReceivedSubscription = New TEOSLobbyInviteReceivedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyInviteReceivedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteReceived(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle))
+	End Function
+	Function _Cancel(subscription:TEOSLobbyInviteReceivedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSLobbyInviteAcceptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyInviteAcceptedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSLobbyInviteAcceptedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteAcceptedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteAcceptedSubscription = New TEOSLobbyInviteAcceptedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSLobbyInviteAcceptedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr, lobbyId:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteAccepted(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle), lobbyId)
+	End Function
+	Function _Cancel(subscription:TEOSLobbyInviteAcceptedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
 Type TEOSPresenceChangedSubscription
 	Private
 	Field _owner:TEOSPlatform
@@ -3414,6 +3568,46 @@ Type TEOSLobby
 		Return result
 	End Method
 
+	Method AddNotifyLobbyUpdateReceived:TEOSLobbyUpdateReceivedSubscription(listener:IEOSLobbyUpdateReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyUpdateReceivedSubscription = TEOSLobbyUpdateReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyMemberUpdateReceived:TEOSLobbyMemberUpdateReceivedSubscription(listener:IEOSLobbyMemberUpdateReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberUpdateReceivedSubscription = TEOSLobbyMemberUpdateReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_member_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyMemberStatusReceived:TEOSLobbyMemberStatusReceivedSubscription(listener:IEOSLobbyMemberStatusReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyMemberStatusReceivedSubscription = TEOSLobbyMemberStatusReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_member_status(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteReceived:TEOSLobbyInviteReceivedSubscription(listener:IEOSLobbyInviteReceivedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteReceivedSubscription = TEOSLobbyInviteReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_invite_received(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteAccepted:TEOSLobbyInviteAcceptedSubscription(listener:IEOSLobbyInviteAcceptedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSLobbyInviteAcceptedSubscription = TEOSLobbyInviteAcceptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_lobby_add_notify_invite_accepted(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
 	Rem
 	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
 	End Rem
@@ -3832,6 +4026,12 @@ Extern
 	Function bmx_eos_lobby_get_invite_count:UInt(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr)
 	Function bmx_eos_lobby_get_invite_id_by_index:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, index:UInt, inviteId:String Var)
 	Function bmx_eos_lobby_copy_details_by_invite:EEOSResult(lobbyHandle:Byte Ptr, inviteId:String, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_add_notify_update:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyUpdateReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_member_update:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyMemberUpdateReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_member_status:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyMemberStatusReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_invite_received:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteReceivedSubscription)
+	Function bmx_eos_lobby_add_notify_invite_accepted:ULong(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, subscription:TEOSLobbyInviteAcceptedSubscription)
+	Function bmx_eos_lobby_remove_notify(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
