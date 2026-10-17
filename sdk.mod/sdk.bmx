@@ -847,6 +847,18 @@ Interface IEOSLobbyUpdateListener
 	Method OnEOSLobbyUpdate(result:EEOSResult, lobbyId:String)
 End Interface
 
+Interface IEOSLobbySendInviteListener
+	Method OnEOSLobbySendInvite(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyRejectInviteListener
+	Method OnEOSLobbyRejectInvite(result:EEOSResult, inviteId:String)
+End Interface
+
+Interface IEOSLobbyQueryInvitesListener
+	Method OnEOSLobbyQueryInvites(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -2230,6 +2242,84 @@ Type TEOSLobbyUpdateRequest
 	End Method
 End Type
 
+Type TEOSLobbySendInviteRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbySendInviteListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbySendInviteRequest(owner:TEOSPlatform, listener:IEOSLobbySendInviteListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbySendInviteRequest = New TEOSLobbySendInviteRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbySendInviteRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbySendInviteListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbySendInvite(result, lobbyId)
+	End Function
+	Function _Cancel(request:TEOSLobbySendInviteRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyRejectInviteRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyRejectInviteListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbyRejectInviteRequest(owner:TEOSPlatform, listener:IEOSLobbyRejectInviteListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyRejectInviteRequest = New TEOSLobbyRejectInviteRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbyRejectInviteRequest, result:EEOSResult, inviteId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyRejectInviteListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyRejectInvite(result, inviteId)
+	End Function
+	Function _Cancel(request:TEOSLobbyRejectInviteRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyQueryInvitesRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyQueryInvitesListener
+	Field _complete:Int
+	Public
+	Function _Create:TEOSLobbyQueryInvitesRequest(owner:TEOSPlatform, listener:IEOSLobbyQueryInvitesListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyQueryInvitesRequest = New TEOSLobbyQueryInvitesRequest
+		request._owner = owner; request._listener = listener
+		Return request
+	End Function
+	Function _Complete(request:TEOSLobbyQueryInvitesRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyQueryInvitesListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyQueryInvites(result, TEOSProductUserId._Create(localUserHandle))
+	End Function
+	Function _Cancel(request:TEOSLobbyQueryInvitesRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Type TEOSPresenceChangedSubscription
 	Private
 	Field _owner:TEOSPlatform
@@ -3283,6 +3373,47 @@ Type TEOSLobby
 		Return request
 	End Method
 
+	Method SendInvite:TEOSLobbySendInviteRequest(lobbyId:String, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId, listener:IEOSLobbySendInviteListener)
+		If Not _ValidUser(localUserId) Or Not targetUserId Or Not targetUserId.IsValid() Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbySendInviteRequest = TEOSLobbySendInviteRequest._Create(_owner, listener)
+		bmx_eos_lobby_send_invite(_owner._NativeHandle(), _handle, request, lobbyId, localUserId._NativeHandle(), targetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method RejectInvite:TEOSLobbyRejectInviteRequest(inviteId:String, localUserId:TEOSProductUserId, listener:IEOSLobbyRejectInviteListener)
+		If Not _ValidUser(localUserId) Or Not inviteId Or Not listener Then Return Null
+		Local request:TEOSLobbyRejectInviteRequest = TEOSLobbyRejectInviteRequest._Create(_owner, listener)
+		bmx_eos_lobby_reject_invite(_owner._NativeHandle(), _handle, request, inviteId, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method QueryInvites:TEOSLobbyQueryInvitesRequest(localUserId:TEOSProductUserId, listener:IEOSLobbyQueryInvitesListener)
+		If Not _ValidUser(localUserId) Or Not listener Then Return Null
+		Local request:TEOSLobbyQueryInvitesRequest = TEOSLobbyQueryInvitesRequest._Create(_owner, listener)
+		bmx_eos_lobby_query_invites(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method InviteCount:UInt(localUserId:TEOSProductUserId)
+		If Not _ValidUser(localUserId) Then Return 0
+		Return bmx_eos_lobby_get_invite_count(_handle, localUserId._NativeHandle())
+	End Method
+
+	Method InviteIdByIndex:EEOSResult(localUserId:TEOSProductUserId, index:UInt, inviteId:String Var)
+		inviteId = ""
+		If Not _ValidUser(localUserId) Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_get_invite_id_by_index(_handle, localUserId._NativeHandle(), index, inviteId)
+	End Method
+
+	Method CopyDetailsByInviteId:EEOSResult(inviteId:String, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not _owner Or Not _owner.IsValid() Or Not inviteId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_copy_details_by_invite(_handle, inviteId, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
 	Rem
 	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
 	End Rem
@@ -3695,6 +3826,12 @@ Extern
 	Function bmx_eos_lobby_update(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyUpdateRequest, modificationHandle:Byte Ptr)
 	Function bmx_eos_lobby_details_get_attribute_count:UInt(detailsHandle:Byte Ptr)
 	Function bmx_eos_lobby_details_copy_attribute_by_index:EEOSResult(detailsHandle:Byte Ptr, index:UInt, key:String Var, valueType:EEOSLobbyAttributeType Var, intValue:Long Var, doubleValue:Double Var, boolValue:Int Var, stringValue:String Var, visibility:EEOSLobbyAttributeVisibility Var)
+	Function bmx_eos_lobby_send_invite(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbySendInviteRequest, lobbyId:String, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_reject_invite(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyRejectInviteRequest, inviteId:String, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_query_invites(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyQueryInvitesRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_get_invite_count:UInt(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_get_invite_id_by_index:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, index:UInt, inviteId:String Var)
+	Function bmx_eos_lobby_copy_details_by_invite:EEOSResult(lobbyHandle:Byte Ptr, inviteId:String, detailsHandle:Byte Ptr Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

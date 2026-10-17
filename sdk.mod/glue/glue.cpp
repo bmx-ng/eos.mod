@@ -89,6 +89,12 @@ void eos_sdk_TEOSLobbySearchFindRequest__Complete(BBObject *, EOS_EResult);
 void eos_sdk_TEOSLobbySearchFindRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLobbyUpdateRequest__Complete(BBObject *, EOS_EResult, BBString *);
 void eos_sdk_TEOSLobbyUpdateRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbySendInviteRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbySendInviteRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyRejectInviteRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyRejectInviteRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyQueryInvitesRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
+void eos_sdk_TEOSLobbyQueryInvitesRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -129,7 +135,10 @@ enum class RequestKind {
 	LobbyLeave,
 	LobbyJoin,
 	LobbySearchFind,
-	LobbyUpdate
+	LobbyUpdate,
+	LobbySendInvite,
+	LobbyRejectInvite,
+	LobbyQueryInvites
 };
 
 struct RequestContext {
@@ -246,6 +255,15 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LobbyUpdate:
 			eos_sdk_TEOSLobbyUpdateRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbySendInvite:
+			eos_sdk_TEOSLobbySendInviteRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyRejectInvite:
+			eos_sdk_TEOSLobbyRejectInviteRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyQueryInvites:
+			eos_sdk_TEOSLobbyQueryInvitesRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -827,6 +845,36 @@ void EOS_CALL LobbyUpdateCallback(const EOS_Lobby_UpdateLobbyCallbackInfo *data)
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSLobbyUpdateRequest__Complete(context->request, data->ResultCode,
 		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbySendInviteCallback(const EOS_Lobby_SendInviteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbySendInviteRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyRejectInviteCallback(const EOS_Lobby_RejectInviteCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyRejectInviteRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->InviteId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyQueryInvitesCallback(const EOS_Lobby_QueryInvitesCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyQueryInvitesRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId);
 	if (terminal) delete context;
 }
 
@@ -2280,6 +2328,67 @@ EOS_EResult bmx_eos_lobby_details_copy_attribute_by_index(EOS_HLobbyDetails deta
 	EOS_EResult result = EOS_LobbyDetails_CopyAttributeByIndex(details, &options, &attribute);
 	return CopyLobbyAttribute(attribute, result, key, valueType, intValue, doubleValue,
 		boolValue, stringValue, visibility);
+}
+
+void bmx_eos_lobby_send_invite(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	BBString *maxLobbyId, EOS_ProductUserId localUserId, EOS_ProductUserId targetUserId) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_Lobby_SendInviteOptions options{};
+	options.ApiVersion = EOS_LOBBY_SENDINVITE_API_LATEST;
+	options.LobbyId = lobbyId.required();
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbySendInvite);
+	EOS_Lobby_SendInvite(lobby, &options, context, LobbySendInviteCallback);
+}
+
+void bmx_eos_lobby_reject_invite(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	BBString *maxInviteId, EOS_ProductUserId localUserId) {
+	UTF8String inviteId(maxInviteId);
+	EOS_Lobby_RejectInviteOptions options{};
+	options.ApiVersion = EOS_LOBBY_REJECTINVITE_API_LATEST;
+	options.InviteId = inviteId.required();
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyRejectInvite);
+	EOS_Lobby_RejectInvite(lobby, &options, context, LobbyRejectInviteCallback);
+}
+
+void bmx_eos_lobby_query_invites(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_ProductUserId localUserId) {
+	EOS_Lobby_QueryInvitesOptions options{};
+	options.ApiVersion = EOS_LOBBY_QUERYINVITES_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyQueryInvites);
+	EOS_Lobby_QueryInvites(lobby, &options, context, LobbyQueryInvitesCallback);
+}
+
+unsigned int bmx_eos_lobby_get_invite_count(EOS_HLobby lobby, EOS_ProductUserId localUserId) {
+	EOS_Lobby_GetInviteCountOptions options{};
+	options.ApiVersion = EOS_LOBBY_GETINVITECOUNT_API_LATEST;
+	options.LocalUserId = localUserId;
+	return EOS_Lobby_GetInviteCount(lobby, &options);
+}
+
+EOS_EResult bmx_eos_lobby_get_invite_id_by_index(EOS_HLobby lobby,
+	EOS_ProductUserId localUserId, unsigned int index, BBString **inviteId) {
+	EOS_Lobby_GetInviteIdByIndexOptions options{};
+	options.ApiVersion = EOS_LOBBY_GETINVITEIDBYINDEX_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.Index = index;
+	char buffer[EOS_LOBBY_INVITEID_MAX_LENGTH + 1]{};
+	int32_t length = static_cast<int32_t>(sizeof(buffer));
+	EOS_EResult result = EOS_Lobby_GetInviteIdByIndex(lobby, &options, buffer, &length);
+	if (result == EOS_EResult::EOS_Success) *inviteId = ToBBString(buffer);
+	return result;
+}
+
+EOS_EResult bmx_eos_lobby_copy_details_by_invite(EOS_HLobby lobby,
+	BBString *maxInviteId, EOS_HLobbyDetails *detailsHandle) {
+	UTF8String inviteId(maxInviteId);
+	EOS_Lobby_CopyLobbyDetailsHandleByInviteIdOptions options{};
+	options.ApiVersion = EOS_LOBBY_COPYLOBBYDETAILSHANDLEBYINVITEID_API_LATEST;
+	options.InviteId = inviteId.required();
+	return EOS_Lobby_CopyLobbyDetailsHandleByInviteId(lobby, &options, detailsHandle);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

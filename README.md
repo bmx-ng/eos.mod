@@ -18,7 +18,7 @@ The current foundation covers:
 - User Info account, display-name, and external-account queries with copied cache access
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
-- Lobby creation, search, joining, leaving, destruction, and copied lobby/member snapshots
+- Lobby creation, search, joining, invitations, leaving, destruction, and copied lobby/member snapshots
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -110,6 +110,8 @@ Lobby searches can target a lobby ID, Product User, or string parameters such
 as the built-in `bucket` key; copied search-result details are passed to Join().
 Owned modification objects publish lobby settings and searchable string
 attributes, plus local-member string attributes.
+Invitations can be sent, queried, enumerated, rejected, and converted into a
+lobby-details handle suitable for Join().
 
 ## Status and roadmap
 
