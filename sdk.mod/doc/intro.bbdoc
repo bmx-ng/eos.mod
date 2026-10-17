@@ -40,6 +40,10 @@ external-account records can be counted and copied by index, type, or ID.
 Platform.Friends() queries the signed-in Epic account's friends and blocklist.
 The cached IDs can be enumerated and their current relationship status checked.
 
+Platform.Presence() queries the local user or an Epic friend. Cached status,
+rich text, product information, and custom key/value records are copied into
+independent managed objects.
+
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.
 See examples/stats.bmx for an Auth-to-Connect flow that ingests and queries a
@@ -48,6 +52,7 @@ See examples/achievements.bmx for definition and player-progress queries.
 See examples/leaderboards.bmx for definition and ranked-record queries.
 See examples/user_info.bmx for an Epic Account profile query and cache copy.
 See examples/friends.bmx for friends, pending invitations, and blocked users.
+See examples/presence.bmx for a self-presence query and cache copy.
 
 On macOS, build interactive Auth clients as GUI application bundles. The
 tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,

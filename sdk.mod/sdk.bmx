@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.10.0"
+ModuleInfo "Version: 0.11.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -35,6 +35,8 @@ ModuleInfo "History: 0.9.0"
 ModuleInfo "History: Added User Info display-name and external-account lookups."
 ModuleInfo "History: 0.10.0"
 ModuleInfo "History: Added Friends list, blocklist, and relationship-status queries."
+ModuleInfo "History: 0.11.0"
+ModuleInfo "History: Added Presence queries and cached presence copies."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -292,6 +294,14 @@ Enum EEOSFriendsStatus
 	Friends = 3
 End Enum
 
+Enum EEOSPresenceStatus
+	Offline = 0
+	Online = 1
+	Away = 2
+	ExtendedAway = 3
+	DoNotDisturb = 4
+End Enum
+
 Enum EEOSLeaderboardAggregation
 	Minimum = 0
 	Maximum = 1
@@ -379,6 +389,26 @@ Type TEOSExternalUserInfo
 	Field AccountId:String
 	Field DisplayName:String
 	Field DisplayNameSanitized:String
+End Type
+
+Type TEOSPresenceDataRecord
+	Field Key:String
+	Field Value:String
+End Type
+
+Rem
+bbdoc: Presence information copied from the local EOS cache.
+End Rem
+Type TEOSPresenceInfo
+	Field Status:EEOSPresenceStatus
+	Field UserId:TEOSEpicAccountId
+	Field ProductId:String
+	Field ProductVersion:String
+	Field Platform:String
+	Field RichText:String
+	Field ProductName:String
+	Field IntegratedPlatform:String
+	Field Records:TEOSPresenceDataRecord[]
 End Type
 
 Type TEOSStatsIngestData
@@ -656,6 +686,10 @@ Interface IEOSFriendsQueryListener
 	Method OnEOSFriendsQuery(result:EEOSResult, localUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSPresenceQueryListener
+	Method OnEOSPresenceQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -875,6 +909,14 @@ Type TEOSPlatform
 	Method Friends:TEOSFriends()
 		If Not _handle Then Return Null
 		Return TEOSFriends._Create(Self, bmx_eos_platform_get_friends_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the Epic Account Services Presence interface.
+	End Rem
+	Method Presence:TEOSPresence()
+		If Not _handle Then Return Null
+		Return TEOSPresence._Create(Self, bmx_eos_platform_get_presence_interface(_handle))
 	End Method
 
 	Rem
@@ -1564,6 +1606,37 @@ Type TEOSFriendsQueryRequest
 
 	Function _Cancel(request:TEOSFriendsQueryRequest) { nomangle }
 		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSPresenceQueryRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSPresenceQueryListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSPresenceQueryRequest(owner:TEOSPlatform, listener:IEOSPresenceQueryListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSPresenceQueryRequest = New TEOSPresenceQueryRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSPresenceQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSPresenceQueryListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSPresenceQuery(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSPresenceQueryRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
 	End Function
 
 	Method IsComplete:Int()
@@ -2288,6 +2361,72 @@ Type TEOSFriends
 	End Method
 End Type
 
+Rem
+bbdoc: Epic Account Services presence access for one platform.
+End Rem
+Type TEOSPresence
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSPresence(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local presence:TEOSPresence = New TEOSPresence
+		presence._owner = owner
+		presence._handle = handle
+		Return presence
+	End Function
+
+	Rem
+	bbdoc: Queries presence for the local user or one of their Epic friends.
+	End Rem
+	Method Query:TEOSPresenceQueryRequest(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, listener:IEOSPresenceQueryListener)
+		If Not _ValidIds(localUserId, targetUserId) Or Not listener Then Return Null
+		Local request:TEOSPresenceQueryRequest = TEOSPresenceQueryRequest._Create(_owner, listener)
+		bmx_eos_presence_query(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), targetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method HasPresence:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not _ValidIds(localUserId, targetUserId) Then Return False
+		Return bmx_eos_presence_has(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle())
+	End Method
+
+	Method CopyPresence:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, info:TEOSPresenceInfo Var)
+		info = Null
+		If Not _ValidIds(localUserId, targetUserId) Then Return EEOSResult.InvalidParameters
+		Local status:EEOSPresenceStatus, userHandle:Byte Ptr
+		Local productId:String, productVersion:String, platform:String, richText:String, productName:String, integratedPlatform:String
+		Local keys:String[], values:String[]
+		Local result:EEOSResult = bmx_eos_presence_copy(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle(), status, userHandle, productId, productVersion, platform, richText, productName, integratedPlatform, keys, values)
+		If result = EEOSResult.Success Then
+			info = New TEOSPresenceInfo
+			info.Status = status
+			info.UserId = TEOSEpicAccountId._Create(userHandle)
+			info.ProductId = productId
+			info.ProductVersion = productVersion
+			info.Platform = platform
+			info.RichText = richText
+			info.ProductName = productName
+			info.IntegratedPlatform = integratedPlatform
+			info.Records = New TEOSPresenceDataRecord[keys.Length]
+			For Local index:Int = 0 Until keys.Length
+				Local record:TEOSPresenceDataRecord = New TEOSPresenceDataRecord
+				record.Key = keys[index]
+				If index < values.Length Then record.Value = values[index]
+				info.Records[index] = record
+			Next
+		End If
+		Return result
+	End Method
+
+	Private
+	Method _ValidIds:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid() And targetUserId And targetUserId.IsValid()
+	End Method
+End Type
+
 Private
 
 Extern
@@ -2311,6 +2450,7 @@ Extern
 	Function bmx_eos_platform_get_leaderboards_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_user_info_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -2371,6 +2511,10 @@ Extern
 	Function bmx_eos_friends_get_status:EEOSFriendsStatus(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_count:Int(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_by_index:Byte Ptr(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:Int)
+
+	Function bmx_eos_presence_query(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_presence_has:Int(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_presence_copy:EEOSResult(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, status:EEOSPresenceStatus Var, userHandle:Byte Ptr Var, productId:String Var, productVersion:String Var, platform:String Var, richText:String Var, productName:String Var, integratedPlatform:String Var, recordKeys:String[] Var, recordValues:String[] Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

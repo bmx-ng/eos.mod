@@ -9,6 +9,7 @@
 #include "../SDK/Include/eos_friends.h"
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_leaderboards.h"
+#include "../SDK/Include/eos_presence.h"
 #include "../SDK/Include/eos_stats.h"
 #include "../SDK/Include/eos_userinfo.h"
 #include "../SDK/Include/eos_version.h"
@@ -59,6 +60,8 @@ void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Complete(BBObject *, EOS
 void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Cancel(BBObject *);
 void eos_sdk_TEOSFriendsQueryRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId);
 void eos_sdk_TEOSFriendsQueryRequest__Cancel(BBObject *);
+void eos_sdk_TEOSPresenceQueryRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId);
+void eos_sdk_TEOSPresenceQueryRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -91,7 +94,8 @@ enum class RequestKind {
 	UserInfoQuery,
 	UserInfoQueryByDisplayName,
 	UserInfoQueryByExternalAccount,
-	FriendsQuery
+	FriendsQuery,
+	PresenceQuery
 };
 
 struct RequestContext {
@@ -184,6 +188,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::FriendsQuery:
 			eos_sdk_TEOSFriendsQueryRequest__Cancel(context->request);
+			break;
+		case RequestKind::PresenceQuery:
+			eos_sdk_TEOSPresenceQueryRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -505,6 +512,16 @@ void EOS_CALL FriendsQueryCallback(const EOS_Friends_QueryFriendsCallbackInfo *d
 	if (terminal) delete context;
 }
 
+void EOS_CALL PresenceQueryCallback(const EOS_Presence_QueryPresenceCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSPresenceQueryRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId);
+	if (terminal) delete context;
+}
+
 } // namespace
 
 extern "C" {
@@ -659,6 +676,10 @@ EOS_HUserInfo bmx_eos_platform_get_user_info_interface(EOS_HPlatform handle) {
 
 EOS_HFriends bmx_eos_platform_get_friends_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetFriendsInterface(handle) : nullptr;
+}
+
+EOS_HPresence bmx_eos_platform_get_presence_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetPresenceInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -1397,6 +1418,60 @@ EOS_EpicAccountId bmx_eos_friends_get_blocked_by_index(EOS_HFriends friends,
 	options.LocalUserId = localUserId;
 	options.Index = index;
 	return EOS_Friends_GetBlockedUserAtIndex(friends, &options);
+}
+
+void bmx_eos_presence_query(EOS_HPlatform platform, EOS_HPresence presence,
+	BBObject *request, EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId) {
+	EOS_Presence_QueryPresenceOptions options{};
+	options.ApiVersion = EOS_PRESENCE_QUERYPRESENCE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::PresenceQuery);
+	EOS_Presence_QueryPresence(presence, &options, context, PresenceQueryCallback);
+}
+
+int bmx_eos_presence_has(EOS_HPresence presence,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId) {
+	EOS_Presence_HasPresenceOptions options{};
+	options.ApiVersion = EOS_PRESENCE_HASPRESENCE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	return EOS_Presence_HasPresence(presence, &options) == EOS_TRUE;
+}
+
+EOS_EResult bmx_eos_presence_copy(EOS_HPresence presence,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId,
+	EOS_Presence_EStatus *status, EOS_EpicAccountId *userId, BBString **productId,
+	BBString **productVersion, BBString **platform, BBString **richText,
+	BBString **productName, BBString **integratedPlatform, BBArray **recordKeys,
+	BBArray **recordValues) {
+	EOS_Presence_CopyPresenceOptions options{};
+	options.ApiVersion = EOS_PRESENCE_COPYPRESENCE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	EOS_Presence_Info *info = nullptr;
+	EOS_EResult result = EOS_Presence_CopyPresence(presence, &options, &info);
+	if (result != EOS_EResult::EOS_Success || !info) return result;
+	*status = info->Status;
+	*userId = info->UserId;
+	*productId = ToBBString(info->ProductId);
+	*productVersion = ToBBString(info->ProductVersion);
+	*platform = ToBBString(info->Platform);
+	*richText = ToBBString(info->RichText);
+	*productName = ToBBString(info->ProductName);
+	*integratedPlatform = ToBBString(info->IntegratedPlatform);
+	std::vector<const char *> keys;
+	std::vector<const char *> values;
+	keys.reserve(info->RecordsCount);
+	values.reserve(info->RecordsCount);
+	for (int32_t index = 0; index < info->RecordsCount; ++index) {
+		keys.push_back(info->Records[index].Key);
+		values.push_back(info->Records[index].Value);
+	}
+	*recordKeys = StringArray(keys);
+	*recordValues = StringArray(values);
+	EOS_Presence_Info_Release(info);
+	return result;
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {
