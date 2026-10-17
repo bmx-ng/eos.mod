@@ -80,6 +80,18 @@ online status and temporary test rich text, then queries the value back:
 open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer presence-write
 ```
 
+To test the Lobby lifecycle, use the isolated `lobby-write` mode. It creates an
+invite-only four-player lobby, publishes and copies a test attribute, verifies
+the owner and member snapshot, and then destroys the lobby:
+
+```sh
+open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer lobby-write
+```
+
+The lobby uses disabled host migration so an unexpected app exit also closes
+it when the local owner disconnects. This mode does not alter Stats,
+Achievements, or Leaderboards.
+
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
 event loop; a Max2D window is sufficient and MaxGUI is not required.
