@@ -45,7 +45,8 @@ removed when no longer needed; platform release removes any that remain.
 Platform.Presence() queries the local user or an Epic friend. Cached status,
 rich text, product information, and custom key/value records are copied into
 independent managed objects. Owned modification objects compose status,
-raw-rich-text, and join-info changes for asynchronous publishing.
+raw-rich-text, and join-info changes for asynchronous publishing. Removable
+subscriptions report presence changes and are cleaned up by platform release.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

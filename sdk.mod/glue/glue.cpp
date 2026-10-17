@@ -68,6 +68,8 @@ void eos_sdk_TEOSFriendsUpdateSubscription__Notify(BBObject *, EOS_EpicAccountId
 void eos_sdk_TEOSFriendsUpdateSubscription__Cancel(BBObject *);
 void eos_sdk_TEOSBlockedUsersUpdateSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_EpicAccountId, int);
 void eos_sdk_TEOSBlockedUsersUpdateSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSPresenceChangedSubscription__Notify(BBObject *, EOS_EpicAccountId, EOS_EpicAccountId);
+void eos_sdk_TEOSPresenceChangedSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -241,6 +243,21 @@ struct FriendsNotificationContext {
 
 std::vector<FriendsNotificationContext *> g_friendsNotifications;
 
+struct PresenceNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HPresence presence;
+	EOS_NotificationId id;
+	BBObject *subscription;
+
+	PresenceNotificationContext(EOS_HPlatform platform, EOS_HPresence presence, BBObject *subscription)
+		: platform(platform), presence(presence), id(EOS_INVALID_NOTIFICATIONID), subscription(subscription) {
+		BBRETAIN(subscription);
+	}
+	~PresenceNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<PresenceNotificationContext *> g_presenceNotifications;
+
 void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	if (!context) return;
 	if (context->id != EOS_INVALID_NOTIFICATIONID) {
@@ -262,6 +279,16 @@ void RemoveFriendsNotification(FriendsNotificationContext *context) {
 	}
 	auto found = std::find(g_friendsNotifications.begin(), g_friendsNotifications.end(), context);
 	if (found != g_friendsNotifications.end()) g_friendsNotifications.erase(found);
+	delete context;
+}
+
+void RemovePresenceNotification(PresenceNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		EOS_Presence_RemoveNotifyOnPresenceChanged(context->presence, context->id);
+	}
+	auto found = std::find(g_presenceNotifications.begin(), g_presenceNotifications.end(), context);
+	if (found != g_presenceNotifications.end()) g_presenceNotifications.erase(found);
 	delete context;
 }
 
@@ -288,6 +315,16 @@ void CancelPlatformNotifications(EOS_HPlatform platform) {
 				EOS_Friends_RemoveNotifyBlockedUsersUpdate(context->friends, context->id);
 				eos_sdk_TEOSBlockedUsersUpdateSubscription__Cancel(context->subscription);
 			}
+		}
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_presenceNotifications.size();) {
+		auto *context = g_presenceNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_presenceNotifications.erase(g_presenceNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			EOS_Presence_RemoveNotifyOnPresenceChanged(context->presence, context->id);
+			eos_sdk_TEOSPresenceChangedSubscription__Cancel(context->subscription);
 		}
 		delete context;
 	}
@@ -601,6 +638,13 @@ void EOS_CALL PresenceSetCallback(const EOS_Presence_SetPresenceCallbackInfo *da
 	eos_sdk_TEOSPresenceSetRequest__Complete(context->request, data->ResultCode,
 		data->LocalUserId, data->RichPresenceResultCode);
 	if (terminal) delete context;
+}
+
+void EOS_CALL PresenceChangedCallback(const EOS_Presence_PresenceChangedCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<PresenceNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSPresenceChangedSubscription__Notify(context->subscription,
+		data->LocalUserId, data->PresenceUserId);
 }
 
 } // namespace
@@ -1631,6 +1675,23 @@ void bmx_eos_presence_set(EOS_HPlatform platform, EOS_HPresence presence, BBObje
 	options.PresenceModificationHandle = modification;
 	auto *context = CreateRequest(platform, request, RequestKind::PresenceSet);
 	EOS_Presence_SetPresence(presence, &options, context, PresenceSetCallback);
+}
+
+uint64_t bmx_eos_presence_add_notify_changed(EOS_HPlatform platform, EOS_HPresence presence,
+	BBObject *subscription) {
+	auto *context = new PresenceNotificationContext(platform, presence, subscription);
+	EOS_Presence_AddNotifyOnPresenceChangedOptions options{};
+	options.ApiVersion = EOS_PRESENCE_ADDNOTIFYONPRESENCECHANGED_API_LATEST;
+	context->id = EOS_Presence_AddNotifyOnPresenceChanged(presence, &options, context, PresenceChangedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_presenceNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_presence_remove_notify_changed(uint64_t id) {
+	auto found = std::find_if(g_presenceNotifications.begin(), g_presenceNotifications.end(),
+		[id](const PresenceNotificationContext *context) { return context->id == id; });
+	if (found != g_presenceNotifications.end()) RemovePresenceNotification(*found);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

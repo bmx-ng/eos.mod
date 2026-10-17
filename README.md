@@ -17,7 +17,7 @@ The current foundation covers:
 - Leaderboard definition, ranked-record, and multi-user score queries
 - User Info account, display-name, and external-account queries with copied cache access
 - Friends list, blocklist, relationship-status queries, and change notifications
-- Presence queries and publishing, with copied status, rich text, product details, and data records
+- Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -99,6 +99,7 @@ The [`presence.bmx`](sdk.mod/examples/presence.bmx) example requests the
 Presence Auth scope, queries the signed-in account, and copies its cached status,
 rich text, product information, and custom data records. Its explicit `write`
 mode publishes an online status and test rich-text value, then queries it back.
+The example also registers a removable presence-change subscription.
 
 ## Status and roadmap
 

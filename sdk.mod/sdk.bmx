@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.13.0"
+ModuleInfo "Version: 0.14.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -41,6 +41,8 @@ ModuleInfo "History: 0.12.0"
 ModuleInfo "History: Added Presence status, rich-text, and join-info publishing."
 ModuleInfo "History: 0.13.0"
 ModuleInfo "History: Added friend-status and blocklist-update notifications."
+ModuleInfo "History: 0.14.0"
+ModuleInfo "History: Added presence-change notifications."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -704,6 +706,10 @@ End Interface
 
 Interface IEOSPresenceSetListener
 	Method OnEOSPresenceSet(result:EEOSResult, localUserId:TEOSEpicAccountId, richPresenceResult:EEOSResult)
+End Interface
+
+Interface IEOSPresenceChangedListener
+	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
 End Interface
 
 Interface IEOSLogListener
@@ -1783,6 +1789,52 @@ Type TEOSPresenceSetRequest
 	End Method
 End Type
 
+Type TEOSPresenceChangedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSPresenceChangedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSPresenceChangedSubscription(owner:TEOSPlatform, listener:IEOSPresenceChangedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSPresenceChangedSubscription = New TEOSPresenceChangedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSPresenceChangedSubscription, localUserHandle:Byte Ptr, presenceUserHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSPresenceChanged(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(presenceUserHandle))
+	End Function
+
+	Function _Cancel(subscription:TEOSPresenceChangedSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_presence_remove_notify_changed(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -2599,6 +2651,14 @@ Type TEOSPresence
 		Return request
 	End Method
 
+	Method AddNotifyPresenceChanged:TEOSPresenceChangedSubscription(listener:IEOSPresenceChangedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSPresenceChangedSubscription = TEOSPresenceChangedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_presence_add_notify_changed(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
 	Private
 	Method _ValidIds:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid() And targetUserId And targetUserId.IsValid()
@@ -2755,6 +2815,8 @@ Extern
 	Function bmx_eos_presence_modification_set_rich_text:EEOSResult(modificationHandle:Byte Ptr, richText:String)
 	Function bmx_eos_presence_modification_set_join_info:EEOSResult(modificationHandle:Byte Ptr, joinInfo:String)
 	Function bmx_eos_presence_set(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceSetRequest, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr)
+	Function bmx_eos_presence_add_notify_changed:ULong(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, subscription:TEOSPresenceChangedSubscription)
+	Function bmx_eos_presence_remove_notify_changed(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
