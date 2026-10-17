@@ -14,3 +14,11 @@ DEV_AUTH_CREDENTIAL=
 
 # Set to 1 only when this test should create a Product User for a new login.
 CREATE_MISSING_PRODUCT_USER=0
+
+# The Stats example requires a stat already configured in the Developer Portal.
+STAT_NAME=
+STAT_INGEST_AMOUNT=1
+
+# Optional explicit-unlock test. Keep disabled unless this mutation is intended.
+ACHIEVEMENT_ID=
+UNLOCK_ACHIEVEMENT=0

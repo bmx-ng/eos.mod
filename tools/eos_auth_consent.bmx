@@ -22,6 +22,10 @@ Global done:Int
 Global succeeded:Int
 Global latestLog:String
 Global pendingProductUser:Int
+Global writeMode:Int
+Global displayedFriendCount:Int
+Global displayedBlockedUserCount:Int
+Global displayedPresenceStatus:EEOSPresenceStatus
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -29,11 +33,41 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
+	Field UserInfo:TEOSUserInfoInterface
+	Field Friends:TEOSFriends
+	Field Presence:TEOSPresence
+	Field Stats:TEOSStats
+	Field Achievements:TEOSAchievements
+	Field Leaderboards:TEOSLeaderboards
 	Field CreateMissingProductUser:Int
 	Field ContinuanceToken:TEOSConnectContinuanceToken
+	Field ProductUserId:TEOSProductUserId
+	Field StatsCount:Int
+	Field DefinitionCount:Int
+	Field PlayerAchievementCount:Int
+	Field LeaderboardCount:Int
+	Field RecordCount:Int
+	Field EpicAccountId:TEOSEpicAccountId
+	Field ProfileDisplayName:String
+	Field FriendCount:Int
+	Field BlockedUserCount:Int
+	Field WriteTest:Int
+	Field RefreshStage:Int
+	Field RefreshAt:Int
+	Field RefreshAttempts:Int
+	Field TestStatName:String
+	Field TestAchievementId:String
+	Field TestThreshold:Int
+	Field TestCurrentValue:Int
+	Field TestProgress:Double
+	Field TestLeaderboardId:String
+	Field TestAggregation:EEOSLeaderboardAggregation
+	Field StatObserved:Int
+	Field UnlockObserved:Int
+	Field UnlockedSubscription:TEOSAchievementsUnlockedSubscription
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -49,30 +83,61 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If result = EEOSResult.Success Then
 			statusKind = 1
 			statusTitle = "Epic account authenticated"
-			statusDetail = "Continuing to EOS Connect..."
-			Local accountId:TEOSEpicAccountId = selectedAccountId
-			If Not accountId Then accountId = localUserId
-			Local idToken:TEOSAuthIdToken
-			result = Auth.CopyIdToken(accountId, idToken)
-			If result <> EEOSResult.Success Then
-				Fail("Could not copy Epic ID token", result)
-				Return
-			End If
-
-			Local credentials:TEOSConnectCredentials = New TEOSConnectCredentials
-			credentials.Type = EEOSExternalCredentialType.EpicIdToken
-			credentials.Token = idToken.JsonWebToken
-			Local options:TEOSConnectLoginOptions = New TEOSConnectLoginOptions
-			options.Credentials = credentials
-			If Not Connect.Login(options, Self) Then
-				statusKind = 3
-				statusTitle = "Could not start Connect login"
-				statusDetail = "The EOS Connect interface rejected the request."
-				done = True
-			End If
+			statusDetail = "Checking the permitted Basic Profile fields..."
+			EpicAccountId = selectedAccountId
+			If Not EpicAccountId Then EpicAccountId = localUserId
+			If Not UserInfo.Query(EpicAccountId, EpicAccountId, Self) Then Fail("Could not start User Info query", EEOSResult.InvalidState)
 		Else
 			Fail("Epic account sign-in did not complete", result)
 		End If
+	End Method
+
+	Method OnEOSUserInfoQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("User Info query failed", result); Return
+		Local info:TEOSUserInfoData
+		result = UserInfo.CopyUserInfo(localUserId, targetUserId, info)
+		If result <> EEOSResult.Success Then Fail("Could not copy User Info", result); Return
+		ProfileDisplayName = info.DisplayName
+		statusTitle = "Epic profile retrieved"
+		statusDetail = ProfileDisplayName + " | Checking friends and blocked users..."
+		If Not Friends.Query(EpicAccountId, Self) Then Fail("Could not start Friends query", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSFriendsQuery(result:EEOSResult, localUserId:TEOSEpicAccountId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Friends query failed", result); Return
+		FriendCount = Friends.FriendCount(localUserId)
+		BlockedUserCount = Friends.BlockedUserCount(localUserId)
+		displayedFriendCount = FriendCount
+		displayedBlockedUserCount = BlockedUserCount
+		statusTitle = "Epic friends retrieved"
+		statusDetail = "Friends " + FriendCount + " | Blocked " + BlockedUserCount + " | Checking presence..."
+		If Not Presence.Query(EpicAccountId, EpicAccountId, Self) Then Fail("Could not start Presence query", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSPresenceQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Presence query failed", result); Return
+		Local info:TEOSPresenceInfo
+		result = Presence.CopyPresence(localUserId, targetUserId, info)
+		If result <> EEOSResult.Success Then Fail("Could not copy Presence", result); Return
+		displayedPresenceStatus = info.Status
+		statusTitle = "Epic presence retrieved"
+		statusDetail = "Status " + PresenceStatusName(info.Status) + " | Continuing to EOS Connect..."
+		BeginConnect()
+	End Method
+
+	Method BeginConnect()
+		Local idToken:TEOSAuthIdToken
+		Local result:EEOSResult = Auth.CopyIdToken(EpicAccountId, idToken)
+		If result <> EEOSResult.Success Then Fail("Could not copy Epic ID token", result); Return
+		Local credentials:TEOSConnectCredentials = New TEOSConnectCredentials
+		credentials.Type = EEOSExternalCredentialType.EpicIdToken
+		credentials.Token = idToken.JsonWebToken
+		Local options:TEOSConnectLoginOptions = New TEOSConnectLoginOptions
+		options.Credentials = credentials
+		If Not Connect.Login(options, Self) Then Fail("Could not start Connect login", EEOSResult.InvalidState)
 	End Method
 
 	Method OnEOSConnectLogin(result:EEOSResult, localUserId:TEOSProductUserId, continuanceToken:TEOSConnectContinuanceToken)
@@ -121,11 +186,189 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	End Method
 
 	Method Complete(localUserId:TEOSProductUserId)
+		ProductUserId = localUserId
+		If WriteTest Then UnlockedSubscription = Achievements.AddNotifyAchievementsUnlocked(Self)
+		statusKind = 1
+		statusTitle = "Checking Stats..."
+		statusDetail = "Querying all configured stats without changing them."
+		Local options:TEOSStatsQueryOptions = New TEOSStatsQueryOptions
+		options.LocalUserId = localUserId
+		options.TargetUserId = localUserId
+		If Not Stats.Query(options, Self) Then Fail("Could not start Stats query", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSStatsQuery(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Stats query failed", result); Return
+		StatsCount = Stats.StatsCount(targetUserId)
+		If RefreshStage Then
+			Local stat:TEOSStat
+			If Stats.CopyStatByName(targetUserId, TestStatName, stat) = EEOSResult.Success Then
+				StatObserved = True
+				TestCurrentValue = stat.Value
+			End If
+			Local playerOptions:TEOSAchievementsQueryPlayerOptions = New TEOSAchievementsQueryPlayerOptions
+			playerOptions.LocalUserId = ProductUserId
+			playerOptions.TargetUserId = ProductUserId
+			If Not Achievements.QueryPlayerAchievements(playerOptions, Self) Then Fail("Could not refresh player achievements", EEOSResult.InvalidState)
+			Return
+		End If
+		statusTitle = "Checking Achievements..."
+		statusDetail = "Stats succeeded; querying achievement definitions."
+		Local options:TEOSAchievementsQueryDefinitionsOptions = New TEOSAchievementsQueryDefinitionsOptions
+		options.LocalUserId = ProductUserId
+		If Not Achievements.QueryDefinitions(options, Self) Then Fail("Could not query Achievements", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSAchievementsQueryDefinitions(result:EEOSResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Achievement definitions failed", result); Return
+		DefinitionCount = Achievements.DefinitionCount()
+		If DefinitionCount > 0 Then
+			Local definition:TEOSAchievementDefinition
+			If Achievements.CopyDefinitionByIndex(0, definition) = EEOSResult.Success Then
+				TestAchievementId = definition.AchievementId
+				If definition.StatThresholds And definition.StatThresholds.Length > 0 Then
+					TestStatName = definition.StatThresholds[0].Name
+					TestThreshold = definition.StatThresholds[0].Threshold
+				End If
+			End If
+		End If
+		Local options:TEOSAchievementsQueryPlayerOptions = New TEOSAchievementsQueryPlayerOptions
+		options.LocalUserId = ProductUserId
+		options.TargetUserId = ProductUserId
+		If Not Achievements.QueryPlayerAchievements(options, Self) Then Fail("Could not query player achievements", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSAchievementsQueryPlayer(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Player achievements failed", result); Return
+		PlayerAchievementCount = Achievements.PlayerAchievementCount(targetUserId)
+		If TestAchievementId Then
+			Local achievement:TEOSPlayerAchievement
+			If Achievements.CopyPlayerAchievementById(localUserId, targetUserId, TestAchievementId, achievement) = EEOSResult.Success Then
+				TestProgress = achievement.Progress
+				If achievement.UnlockTime <> EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED Then UnlockObserved = True
+				For Local statInfo:TEOSPlayerAchievementStatInfo = EachIn achievement.StatInfo
+					If statInfo.Name = TestStatName Then TestCurrentValue = statInfo.CurrentValue
+				Next
+			End If
+		End If
+		If RefreshStage Then
+			If TestLeaderboardId Then
+				If Not Leaderboards.QueryRanks(ProductUserId, TestLeaderboardId, Self) Then Fail("Could not refresh leaderboard ranks", EEOSResult.InvalidState)
+			Else
+				EvaluateWriteTest()
+			End If
+			Return
+		End If
+		statusTitle = "Checking Leaderboards..."
+		statusDetail = "Achievements succeeded; querying leaderboard definitions."
+		Local options:TEOSLeaderboardsQueryDefinitionsOptions = New TEOSLeaderboardsQueryDefinitionsOptions
+		options.LocalUserId = ProductUserId
+		If Not Leaderboards.QueryDefinitions(options, Self) Then Fail("Could not query Leaderboards", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSLeaderboardsQueryDefinitions(result:EEOSResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Leaderboard definitions failed", result); Return
+		LeaderboardCount = Leaderboards.DefinitionCount()
+		If LeaderboardCount > 0 Then
+			For Local index:Int = 0 Until LeaderboardCount
+				Local definition:TEOSLeaderboardDefinition
+				result = Leaderboards.CopyDefinitionByIndex(index, definition)
+				If result <> EEOSResult.Success Then Fail("Could not copy leaderboard definition", result); Return
+				If Not TestLeaderboardId Or definition.StatName = TestStatName Then
+					TestLeaderboardId = definition.LeaderboardId
+					TestAggregation = definition.Aggregation
+				End If
+			Next
+			If Not Leaderboards.QueryRanks(ProductUserId, TestLeaderboardId, Self) Then Fail("Could not query leaderboard ranks", EEOSResult.InvalidState)
+		Else
+			FinishServiceChecks()
+		End If
+	End Method
+
+	Method OnEOSLeaderboardsQueryRanks(result:EEOSResult, leaderboardId:String)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Leaderboard ranks failed", result); Return
+		RecordCount = Leaderboards.RecordCount()
+		If RefreshStage Then EvaluateWriteTest() Else FinishServiceChecks()
+	End Method
+
+	Method FinishServiceChecks()
+		If WriteTest Then
+			If Not TestStatName Or TestThreshold <= 0 Then Fail("No achievement stat threshold found", EEOSResult.NotFound); Return
+			Local amount:Int = TestThreshold
+			If TestAggregation = EEOSLeaderboardAggregation.Sum Then amount = TestThreshold - TestCurrentValue
+			If amount <= 0 Then amount = 1
+			Local data:TEOSStatsIngestData = New TEOSStatsIngestData
+			data.Name = TestStatName
+			data.IngestAmount = amount
+			Local options:TEOSStatsIngestOptions = New TEOSStatsIngestOptions
+			options.LocalUserId = ProductUserId
+			options.TargetUserId = ProductUserId
+			options.Stats = [data]
+			statusKind = 1
+			statusTitle = "Ingesting test stat..."
+			statusDetail = TestStatName + " +" + amount + " toward " + TestAchievementId
+			If Not Stats.Ingest(options, Self) Then Fail("Could not start stat ingest", EEOSResult.InvalidState)
+			Return
+		End If
 		succeeded = True
 		done = True
 		statusKind = 2
-		statusTitle = "Auth and Connect completed"
-		statusDetail = "Product User ID: " + localUserId.ToString()
+		statusTitle = "EOS service checks completed"
+		statusDetail = ProfileDisplayName + " | Friends " + FriendCount + " | Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
+	End Method
+
+	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Stat ingest failed", result); Return
+		RefreshStage = True
+		RefreshAttempts = 0
+		ScheduleRefresh()
+	End Method
+
+	Method OnEOSAchievementUnlocked(userId:TEOSProductUserId, achievementId:String, unlockTime:Long)
+		If achievementId = TestAchievementId Then UnlockObserved = True
+	End Method
+
+	Method ScheduleRefresh()
+		RefreshAt = MilliSecs() + 3000
+		statusKind = 1
+		statusTitle = "Waiting for EOS processing..."
+		statusDetail = "Attempt " + (RefreshAttempts + 1) + ": stat, achievement, and rank will be queried again."
+	End Method
+
+	Method Update()
+		If Not RefreshAt Or MilliSecs() < RefreshAt Then Return
+		RefreshAt = 0
+		RefreshAttempts :+ 1
+		Local options:TEOSStatsQueryOptions = New TEOSStatsQueryOptions
+		options.LocalUserId = ProductUserId
+		options.TargetUserId = ProductUserId
+		options.StatNames = [TestStatName]
+		If Not Stats.Query(options, Self) Then Fail("Could not refresh Stats", EEOSResult.InvalidState)
+	End Method
+
+	Method EvaluateWriteTest()
+		If StatObserved And (UnlockObserved Or TestProgress >= 1.0) And (Not TestLeaderboardId Or RecordCount > 0) Then
+			succeeded = True
+			done = True
+			statusKind = 2
+			statusTitle = "EOS write pipeline completed"
+			statusDetail = TestStatName + "=" + TestCurrentValue + " | Achievement " + (TestProgress * 100.0) + "% | Rank records " + RecordCount
+			Return
+		End If
+		If RefreshAttempts >= 20 Then
+			done = True
+			statusKind = 3
+			statusTitle = "EOS backend processing is still pending"
+			statusDetail = TestStatName + "=" + TestCurrentValue + " | Achievement " + (TestProgress * 100.0) + "% | Rank records " + RecordCount
+		Else
+			ScheduleRefresh()
+		End If
 	End Method
 
 	Method Fail(title:String, result:EEOSResult)
@@ -192,6 +435,7 @@ Function StartLogin:Int(auth:TEOSAuth, listener:TAuthConnectListener, config:Str
 
 	Local loginOptions:TEOSAuthLoginOptions = New TEOSAuthLoginOptions
 	loginOptions.Credentials = credentials
+	loginOptions.ScopeFlags = EEOSAuthScopeFlags.BasicProfile | EEOSAuthScopeFlags.FriendsList | EEOSAuthScopeFlags.Presence
 	If Not auth Or Not auth.Login(loginOptions, listener) Then
 		statusKind = 3
 		statusTitle = "Could not start EOS login"
@@ -234,11 +478,24 @@ Function DrawScreen()
 		DrawText verificationURI, 70, 226
 		If userCode Then DrawText "Code: " + userCode, 70, 263
 	Else
-		If statusTitle = "Choose a login method" Then
+		If done And succeeded Then
+			If writeMode Then
+				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
+				DrawText "The test achievement may now be permanently unlocked.", 70, 279
+			Else
+				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
+				DrawText "Zero values are valid when this test account has no data.", 70, 279
+			End If
+		Else If done Then
+			DrawText "The test stopped at the service named above.", 70, 205
+			DrawText "Check the client policy and latest EOS log message.", 70, 242
+		Else If statusTitle = "Choose a login method" Then
 			DrawText "Press A  -  Account Portal and consent", 70, 205
 			DrawText "Press D  -  Developer Authentication Tool", 70, 242
 		Else
-			DrawText "Waiting for EOS authentication and Connect...", 70, 205
+			DrawText "Waiting for EOS authentication, Connect, and service checks...", 70, 205
 			DrawText "If a browser or Epic window opens, sign in and click Allow.", 70, 242
 		End If
 	End If
@@ -255,6 +512,16 @@ Function DrawScreen()
 	Flip
 End Function
 
+Function PresenceStatusName:String(status:EEOSPresenceStatus)
+	Select status
+		Case EEOSPresenceStatus.Online Return "Online"
+		Case EEOSPresenceStatus.Away Return "Away"
+		Case EEOSPresenceStatus.ExtendedAway Return "Extended away"
+		Case EEOSPresenceStatus.DoNotDisturb Return "Do not disturb"
+		Default Return "Offline"
+	End Select
+End Function
+
 Graphics WINDOW_WIDTH, WINDOW_HEIGHT, 0, 60, GRAPHICS_BACKBUFFER
 SetClsColor 22, 27, 38
 
@@ -262,6 +529,7 @@ Local completedMainLoop:Int
 Local configPath:String = FindConfig()
 Local loginMode:String
 If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
+If AppArgs.Length > 3 And AppArgs[3].ToLower() = "write" Then writeMode = True
 If Not configPath Then
 	statusKind = 3
 	statusTitle = "eos.local.conf was not found"
@@ -270,8 +538,8 @@ If Not configPath Then
 Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
-	initializeOptions.ProductName = "EOS Account Consent Test"
-	initializeOptions.ProductVersion = "0.2.0"
+	initializeOptions.ProductName = "EOS Integration Test"
+	initializeOptions.ProductVersion = "0.11.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -299,11 +567,24 @@ Else
 		Else
 			Local auth:TEOSAuth = platform.Auth()
 			Local connect:TEOSConnect = platform.Connect()
+			Local stats:TEOSStats = platform.Stats()
+			Local achievements:TEOSAchievements = platform.Achievements()
+			Local leaderboards:TEOSLeaderboards = platform.Leaderboards()
+			Local userInfo:TEOSUserInfoInterface = platform.UserInfo()
+			Local friends:TEOSFriends = platform.Friends()
+			Local presence:TEOSPresence = platform.Presence()
 			Local listener:TAuthConnectListener = New TAuthConnectListener
 			listener.Auth = auth
 			listener.Connect = connect
+			listener.UserInfo = userInfo
+			listener.Friends = friends
+			listener.Presence = presence
+			listener.Stats = stats
+			listener.Achievements = achievements
+			listener.Leaderboards = leaderboards
+			listener.WriteTest = writeMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-			If Not auth Or Not connect Then
+			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Or Not presence Then
 				statusKind = 3
 				statusTitle = "EOS interfaces are unavailable"
 				statusDetail = "The platform did not provide Auth and Connect."
@@ -317,6 +598,7 @@ Else
 
 			While Not KeyHit(KEY_ESCAPE) And Not AppTerminate()
 				platform.Tick()
+				listener.Update()
 				If Not done And Not loginMode Then
 					If KeyHit(KEY_A) Then
 						loginMode = "account-portal"
@@ -330,6 +612,7 @@ Else
 				DrawScreen()
 			Wend
 			completedMainLoop = True
+			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
 			platform.Release()
 		End If
 
