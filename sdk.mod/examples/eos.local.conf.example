@@ -6,7 +6,12 @@ SANDBOX_ID=
 DEPLOYMENT_ID=
 CLIENT_ID=
 CLIENT_SECRET=
+# A stable 256-bit key written as exactly 64 hexadecimal characters. Storage
+# files cannot be recovered if this key is changed or lost.
 ENCRYPTION_KEY=
+# Storage requires an absolute cache path. The storage example uses its own
+# executable directory when this is empty.
+CACHE_DIRECTORY=
 
 # Values configured in the EOS Developer Authentication Tool.
 DEV_AUTH_HOST=localhost:6547
@@ -24,3 +29,7 @@ STAT_INGEST_AMOUNT=1
 # Optional explicit-unlock test. Keep disabled unless this mutation is intended.
 ACHIEVEMENT_ID=
 UNLOCK_ACHIEVEMENT=0
+
+# Optional file already uploaded to Title Storage. The storage stream example
+# skips its Title Storage read when this is empty.
+TITLE_STORAGE_FILENAME=

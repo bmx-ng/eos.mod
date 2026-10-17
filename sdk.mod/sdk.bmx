@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.17.0"
+ModuleInfo "Version: 0.18.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -50,6 +50,8 @@ ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snap
 ModuleInfo "History: 0.17.0"
 ModuleInfo "History: Added P2P packet transport and connection-control foundation."
 ModuleInfo "History: Added P2P NAT, relay, port-range, and packet-queue controls."
+ModuleInfo "History: 0.18.0"
+ModuleInfo "History: Added streaming Title Storage and Player Data Storage APIs."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -72,7 +74,9 @@ Import "-lEOSSDK-Mac-Shipping"
 ?
 
 Import "SDK/Include/*.h"
+Import BRL.Stream
 Import "glue/glue.cpp"
+Import "glue/storage_glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
@@ -171,6 +175,26 @@ Enum EEOSResult
 	AuthParentalControls = 1070
 	AuthNoRealId = 1080
 	AuthUserInterfaceRequired = 1090
+	PlayerDataStorageFilenameInvalid = 6000
+	PlayerDataStorageFilenameLengthInvalid = 6001
+	PlayerDataStorageFilenameInvalidChars = 6002
+	PlayerDataStorageFileSizeTooLarge = 6003
+	PlayerDataStorageFileSizeInvalid = 6004
+	PlayerDataStorageFileHandleInvalid = 6005
+	PlayerDataStorageDataInvalid = 6006
+	PlayerDataStorageDataLengthInvalid = 6007
+	PlayerDataStorageStartIndexInvalid = 6008
+	PlayerDataStorageRequestInProgress = 6009
+	PlayerDataStorageUserThrottled = 6010
+	PlayerDataStorageEncryptionKeyNotSet = 6011
+	PlayerDataStorageUserErrorFromDataCallback = 6012
+	PlayerDataStorageFileHeaderHasNewerVersion = 6013
+	PlayerDataStorageFileCorrupted = 6014
+	TitleStorageUserErrorFromDataCallback = 10000
+	TitleStorageEncryptionKeyNotSet = 10001
+	TitleStorageFileCorrupted = 10002
+	TitleStorageFileHeaderHasNewerVersion = 10003
+	UnexpectedError = $7fffffff
 End Enum
 
 Enum EEOSLogLevel
@@ -1233,6 +1257,22 @@ Type TEOSPlatform
 	Method P2P:TEOSP2P()
 		If Not _handle Then Return Null
 		Return TEOSP2P._Create(Self, bmx_eos_platform_get_p2p_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS read-only Title Storage interface.
+	End Rem
+	Method TitleStorage:TEOSTitleStorage()
+		If Not _handle Then Return Null
+		Return TEOSTitleStorage._Create(Self, bmx_eos_platform_get_title_storage_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS per-user Player Data Storage interface.
+	End Rem
+	Method PlayerDataStorage:TEOSPlayerDataStorage()
+		If Not _handle Then Return Null
+		Return TEOSPlayerDataStorage._Create(Self, bmx_eos_platform_get_player_storage_interface(_handle))
 	End Method
 
 	Rem
@@ -4387,6 +4427,8 @@ Extern
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_title_storage_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_player_storage_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -4541,3 +4583,6 @@ Extern
 	Function bmx_eos_product_user_id_is_valid:Int(handle:Byte Ptr)
 	Function bmx_eos_product_user_id_to_string:String(handle:Byte Ptr)
 End Extern
+
+Public
+Include "storage.bmx"
