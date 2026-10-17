@@ -1,11 +1,21 @@
 SuperStrict
 
-Framework EOS.SDK
+Framework Max2D.SDL3RenderMax2D
+Import EOS.SDK
 Import BRL.Bank
 Import BRL.BankStream
 Import BRL.FileSystem
+Import BRL.PolledInput
 Import BRL.StandardIO
 Import BRL.TextStream
+
+Global storageStatus:String = "Starting EOS Storage stream test..."
+
+Type TStorageLogListener Implements IEOSLogListener
+	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
+		Print "[" + category + "] " + message
+	End Method
+End Type
 
 Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStorageQueryListener, IEOSStorageTransferListener, IEOSStorageOperationListener
 	Field Auth:TEOSAuth
@@ -21,9 +31,11 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	Field ExpectedPlayerText:String = "Hello from BlitzMax Player Data Storage."
 	Field PlayerFilename:String = "blitzmax-stream-test.txt"
 	Field PlayerCopyFilename:String = "blitzmax-stream-test-copy.txt"
+	Field PendingUserId:TEOSProductUserId
 	Field Done:Int
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
+		storageStatus = "Auth login: " + EOSResultString(result)
 		Print "Auth login: " + EOSResultString(result)
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Done = True; Return
@@ -43,9 +55,10 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method OnEOSConnectLogin(result:EEOSResult, localUserId:TEOSProductUserId, continuanceToken:TEOSConnectContinuanceToken)
+		storageStatus = "Connect login: " + EOSResultString(result)
 		Print "Connect login: " + EOSResultString(result)
 		If Not EOSResultIsOperationComplete(result) Then Return
-		If result = EEOSResult.Success Then StartStorage(localUserId); Return
+		If result = EEOSResult.Success Then PendingUserId = localUserId; Return
 		If result = EEOSResult.InvalidUser And continuanceToken And CreateMissingProductUser Then
 			If Not Connect.CreateUser(continuanceToken, Self) Then Done = True
 		Else
@@ -54,15 +67,25 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method OnEOSConnectCreateUser(result:EEOSResult, localUserId:TEOSProductUserId)
+		storageStatus = "Connect create user: " + EOSResultString(result)
 		Print "Connect create user: " + EOSResultString(result)
 		If Not EOSResultIsOperationComplete(result) Then Return
-		If result = EEOSResult.Success Then StartStorage(localUserId) Else Done = True
+		If result = EEOSResult.Success Then PendingUserId = localUserId Else Done = True
+	End Method
+
+	Method Update()
+		If PendingUserId Then
+			Local userId:TEOSProductUserId = PendingUserId
+			PendingUserId = Null
+			StartStorage(userId)
+		End If
 	End Method
 
 	Method StartStorage(userId:TEOSProductUserId)
 		Self.UserId = userId
 		Print "Product User ID: " + UserId.ToString()
 		If TitleFilename Then
+			storageStatus = "Querying Title Storage: " + TitleFilename
 			Print "Querying Title Storage file: " + TitleFilename
 			If Not TitleStorage.QueryFile(UserId, TitleFilename, Self) Then Print "Could not start Title Storage query."; Done = True
 		Else
@@ -72,6 +95,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method StartTitleRead()
+		storageStatus = "Downloading Title Storage: " + TitleFilename
 		Bank = TBank.Create(0)
 		Stream = CreateBankStream(Bank)
 		Transfer = TitleStorage.ReadFile(UserId, TitleFilename, Stream, Self)
@@ -79,6 +103,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method StartPlayerWrite()
+		storageStatus = "Uploading Player Data Storage test file..."
 		Bank = TBank.Create(0)
 		Stream = CreateBankStream(Bank)
 		Stream.WriteString(ExpectedPlayerText, True)
@@ -89,6 +114,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method StartPlayerRead()
+		storageStatus = "Downloading Player Data Storage test file..."
 		Bank = TBank.Create(0)
 		Stream = CreateBankStream(Bank)
 		Print "Downloading Player Data Storage file through a TBankStream."
@@ -97,8 +123,17 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method OnEOSStorageQuery(operation:EEOSStorageOperation, result:EEOSResult, localUserId:TEOSProductUserId, fileCount:UInt)
+		storageStatus = "Storage query: " + EOSResultString(result)
 		Print "Storage query " + Int(operation) + ": " + EOSResultString(result) + ", files = " + fileCount
-		If result <> EEOSResult.Success Then Done = True; Return
+		If result <> EEOSResult.Success Then
+			If operation = EEOSStorageOperation.TitleQueryFile Then
+				Print "Skipping the optional Title Storage read and continuing with Player Data Storage."
+				StartPlayerWrite()
+				Return
+			End If
+			Done = True
+			Return
+		End If
 
 		Select operation
 			Case EEOSStorageOperation.TitleQueryFile
@@ -116,6 +151,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method OnEOSStorageTransfer(operation:EEOSStorageOperation, result:EEOSResult, localUserId:TEOSProductUserId, filename:String)
+		storageStatus = "Storage transfer: " + EOSResultString(result)
 		Print "Storage transfer " + Int(operation) + " for " + filename + ": " + EOSResultString(result)
 		Transfer = Null
 		If result <> EEOSResult.Success Then Done = True; Return
@@ -136,6 +172,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 	End Method
 
 	Method OnEOSStorageOperation(operation:EEOSStorageOperation, result:EEOSResult, localUserId:TEOSProductUserId, filename:String)
+		storageStatus = "Storage operation: " + EOSResultString(result)
 		Print "Storage operation " + Int(operation) + " for " + filename + ": " + EOSResultString(result)
 		If result <> EEOSResult.Success Then Done = True; Return
 		Select operation
@@ -145,6 +182,7 @@ Type TStorageFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IE
 				If filename = PlayerFilename Then
 					If Not PlayerStorage.DeleteFile(UserId, PlayerCopyFilename, Self) Then Print "Could not delete copied file."; Done = True
 				Else
+					storageStatus = "Storage stream test completed successfully."
 					Print "Storage stream test completed."
 					Done = True
 				End If
@@ -162,6 +200,9 @@ Function ConfigValue:String(config:String, name:String)
 	Return ""
 End Function
 
+Graphics 760, 180, 0, 60, GRAPHICS_BACKBUFFER
+SetClsColor 22, 27, 38
+
 Local configPath:String = "eos.local.conf"
 If AppArgs.Length > 1 Then configPath = AppArgs[1]
 If FileType(configPath) <> FILETYPE_FILE Then RuntimeError "Copy eos.local.conf.example to eos.local.conf and fill in your EOS values."
@@ -172,6 +213,8 @@ initialize.ProductName = "EOS Storage stream example"
 initialize.ProductVersion = "0.18.0"
 Local result:EEOSResult = EOSInitialize(initialize)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
+TEOSLogging.SetListener(New TStorageLogListener)
+TEOSLogging.SetLevel(EEOSLogCategory.AllCategories, EEOSLogLevel.Info)
 
 Local options:TEOSPlatformOptions = New TEOSPlatformOptions
 options.ProductId = ConfigValue(config, "PRODUCT_ID")
@@ -208,12 +251,20 @@ login.Credentials = credentials
 If Not flow.Auth.Login(login, flow) Then RuntimeError "Could not start Auth login."
 
 Local started:Int = MilliSecs()
-While Not flow.Done And MilliSecs() - started < 120000
+While Not flow.Done And MilliSecs() - started < 120000 And Not AppTerminate()
 	platform.Tick()
-	Delay 16
+	flow.Update()
+	Cls
+	SetColor 238, 242, 255
+	DrawText "EOS Storage stream test", 24, 28
+	SetColor 170, 184, 210
+	DrawText storageStatus, 24, 72
+	DrawText "This window closes when the test completes.", 24, 108
+	Flip
 Wend
 If Not flow.Done Then Print "Storage stream example timed out."
 
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError "EOS shutdown failed: " + EOSResultString(result)
+EndGraphics

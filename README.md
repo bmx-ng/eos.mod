@@ -175,6 +175,17 @@ The encryption key must be a stable 256-bit value represented by exactly 64
 hexadecimal characters. Changing or losing it makes previously stored files
 unreadable.
 
+On macOS, build authenticated EOS examples such as `storage_streams.bmx` as a
+GUI `.app` and place `libEOSSDK-Mac-Shipping.dylib` in its `Contents/MacOS`
+directory. The Max2D event loop and Launch Services application context are
+required even when Developer Authentication is used.
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_storage_test sdk.mod/examples/storage_streams.bmx
+cp sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib tools/eos_storage_test.app/Contents/MacOS
+open tools/eos_storage_test.app --args sdk.mod/examples/eos.local.conf
+```
+
 ## Shipping the runtime library
 
 Your finished application needs the EOS runtime matching its target:

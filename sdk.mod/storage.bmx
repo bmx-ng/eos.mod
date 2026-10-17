@@ -295,7 +295,9 @@ Type TEOSTitleStorage
 		Return request
 	End Method
 	Private
-	Method UserHandle:Byte Ptr(user:TEOSProductUserId) If user Then Return user._NativeHandle() Else Return Null
+	Method UserHandle:Byte Ptr(user:TEOSProductUserId)
+		If user Then Return user._NativeHandle()
+		Return Null
 	End Method
 	Method FilenameValid:Int(filename:String) Return filename.Length > 0 And filename.Length <= EOS_TITLESTORAGE_FILENAME_MAX_LENGTH_BYTES End Method
 	Method ValidOptional:Int(user:TEOSProductUserId) Return _owner And _owner.IsValid() And _handle And (Not user Or user.IsValid()) End Method
