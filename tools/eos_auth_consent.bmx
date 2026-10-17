@@ -30,9 +30,10 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
+	Field UserInfo:TEOSUserInfoInterface
 	Field Stats:TEOSStats
 	Field Achievements:TEOSAchievements
 	Field Leaderboards:TEOSLeaderboards
@@ -44,6 +45,8 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field PlayerAchievementCount:Int
 	Field LeaderboardCount:Int
 	Field RecordCount:Int
+	Field EpicAccountId:TEOSEpicAccountId
+	Field ProfileDisplayName:String
 	Field WriteTest:Int
 	Field RefreshStage:Int
 	Field RefreshAt:Int
@@ -73,30 +76,37 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If result = EEOSResult.Success Then
 			statusKind = 1
 			statusTitle = "Epic account authenticated"
-			statusDetail = "Continuing to EOS Connect..."
-			Local accountId:TEOSEpicAccountId = selectedAccountId
-			If Not accountId Then accountId = localUserId
-			Local idToken:TEOSAuthIdToken
-			result = Auth.CopyIdToken(accountId, idToken)
-			If result <> EEOSResult.Success Then
-				Fail("Could not copy Epic ID token", result)
-				Return
-			End If
-
-			Local credentials:TEOSConnectCredentials = New TEOSConnectCredentials
-			credentials.Type = EEOSExternalCredentialType.EpicIdToken
-			credentials.Token = idToken.JsonWebToken
-			Local options:TEOSConnectLoginOptions = New TEOSConnectLoginOptions
-			options.Credentials = credentials
-			If Not Connect.Login(options, Self) Then
-				statusKind = 3
-				statusTitle = "Could not start Connect login"
-				statusDetail = "The EOS Connect interface rejected the request."
-				done = True
-			End If
+			statusDetail = "Checking the permitted Basic Profile fields..."
+			EpicAccountId = selectedAccountId
+			If Not EpicAccountId Then EpicAccountId = localUserId
+			If Not UserInfo.Query(EpicAccountId, EpicAccountId, Self) Then Fail("Could not start User Info query", EEOSResult.InvalidState)
 		Else
 			Fail("Epic account sign-in did not complete", result)
 		End If
+	End Method
+
+	Method OnEOSUserInfoQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("User Info query failed", result); Return
+		Local info:TEOSUserInfoData
+		result = UserInfo.CopyUserInfo(localUserId, targetUserId, info)
+		If result <> EEOSResult.Success Then Fail("Could not copy User Info", result); Return
+		ProfileDisplayName = info.DisplayName
+		statusTitle = "Epic profile retrieved"
+		statusDetail = ProfileDisplayName + " | Continuing to EOS Connect..."
+		BeginConnect()
+	End Method
+
+	Method BeginConnect()
+		Local idToken:TEOSAuthIdToken
+		Local result:EEOSResult = Auth.CopyIdToken(EpicAccountId, idToken)
+		If result <> EEOSResult.Success Then Fail("Could not copy Epic ID token", result); Return
+		Local credentials:TEOSConnectCredentials = New TEOSConnectCredentials
+		credentials.Type = EEOSExternalCredentialType.EpicIdToken
+		credentials.Token = idToken.JsonWebToken
+		Local options:TEOSConnectLoginOptions = New TEOSConnectLoginOptions
+		options.Credentials = credentials
+		If Not Connect.Login(options, Self) Then Fail("Could not start Connect login", EEOSResult.InvalidState)
 	End Method
 
 	Method OnEOSConnectLogin(result:EEOSResult, localUserId:TEOSProductUserId, continuanceToken:TEOSConnectContinuanceToken)
@@ -278,7 +288,7 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		done = True
 		statusKind = 2
 		statusTitle = "EOS service checks completed"
-		statusDetail = "Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
+		statusDetail = ProfileDisplayName + " | Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
 	End Method
 
 	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
@@ -441,7 +451,7 @@ Function DrawScreen()
 				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
 				DrawText "The test achievement may now be permanently unlocked.", 70, 242
 			Else
-				DrawText "All read-only EOS service queries returned successfully.", 70, 205
+				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
 				DrawText "Zero values mean this Product User has no ingested data yet.", 70, 242
 			End If
 		Else If done Then
@@ -485,7 +495,7 @@ Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 	initializeOptions.ProductName = "EOS Integration Test"
-	initializeOptions.ProductVersion = "0.7.0"
+	initializeOptions.ProductVersion = "0.9.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -516,15 +526,17 @@ Else
 			Local stats:TEOSStats = platform.Stats()
 			Local achievements:TEOSAchievements = platform.Achievements()
 			Local leaderboards:TEOSLeaderboards = platform.Leaderboards()
+			Local userInfo:TEOSUserInfoInterface = platform.UserInfo()
 			Local listener:TAuthConnectListener = New TAuthConnectListener
 			listener.Auth = auth
 			listener.Connect = connect
+			listener.UserInfo = userInfo
 			listener.Stats = stats
 			listener.Achievements = achievements
 			listener.Leaderboards = leaderboards
 			listener.WriteTest = writeMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Then
+			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Then
 				statusKind = 3
 				statusTitle = "EOS interfaces are unavailable"
 				statusDetail = "The platform did not provide Auth and Connect."

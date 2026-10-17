@@ -47,5 +47,5 @@ See examples/user_info.bmx for an Epic Account profile query and cache copy.
 
 On macOS, build interactive Auth clients as GUI application bundles. The
 tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,
-Developer Authentication Tool login, Connect, and Product User creation without
-requiring MaxGUI.
+Developer Authentication Tool login, User Info, Connect, and Product User
+creation without requiring MaxGUI.
