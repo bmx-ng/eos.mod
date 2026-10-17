@@ -23,6 +23,8 @@ Global succeeded:Int
 Global latestLog:String
 Global pendingProductUser:Int
 Global writeMode:Int
+Global displayedFriendCount:Int
+Global displayedBlockedUserCount:Int
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -105,6 +107,8 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If result <> EEOSResult.Success Then Fail("Friends query failed", result); Return
 		FriendCount = Friends.FriendCount(localUserId)
 		BlockedUserCount = Friends.BlockedUserCount(localUserId)
+		displayedFriendCount = FriendCount
+		displayedBlockedUserCount = BlockedUserCount
 		statusTitle = "Epic friends retrieved"
 		statusDetail = "Friends " + FriendCount + " | Blocked " + BlockedUserCount + " | Continuing to EOS Connect..."
 		BeginConnect()
@@ -463,10 +467,12 @@ Function DrawScreen()
 		If done And succeeded Then
 			If writeMode Then
 				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
-				DrawText "The test achievement may now be permanently unlocked.", 70, 242
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked users: " + displayedBlockedUserCount, 70, 242
+				DrawText "The test achievement may now be permanently unlocked.", 70, 279
 			Else
 				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
-				DrawText "Zero values mean this Product User has no ingested data yet.", 70, 242
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked users: " + displayedBlockedUserCount, 70, 242
+				DrawText "Zero values are valid when this test account has no data.", 70, 279
 			End If
 		Else If done Then
 			DrawText "The test stopped at the service named above.", 70, 205
