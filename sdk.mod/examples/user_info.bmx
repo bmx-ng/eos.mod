@@ -50,6 +50,15 @@ Type TUserInfoFlow Implements IEOSAuthLoginListener, IEOSUserInfoQueryListener
 				Print "Nickname: " + info.Nickname
 				Print "Country: " + info.Country
 				Print "Preferred language: " + info.PreferredLanguage
+				Local externalCount:Int = UserInfo.ExternalUserInfoCount(localUserId, targetUserId)
+				Print "Linked external accounts cached: " + externalCount
+				For Local index:Int = 0 Until externalCount
+					Local externalInfo:TEOSExternalUserInfo
+					Local copyResult:EEOSResult = UserInfo.CopyExternalUserInfoByIndex(localUserId, targetUserId, index, externalInfo)
+					If copyResult = EEOSResult.Success Then
+						Print "  Type " + Int(externalInfo.AccountType) + ": " + externalInfo.DisplayName + " (" + externalInfo.AccountId + ")"
+					End If
+				Next
 				Success = True
 			End If
 		End If
@@ -79,7 +88,7 @@ Local config:String = LoadText(configPath)
 
 Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 initializeOptions.ProductName = "EOS User Info example"
-initializeOptions.ProductVersion = "0.8.0"
+initializeOptions.ProductVersion = "0.9.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
 TEOSLogging.SetListener(New TConsoleLogListener)

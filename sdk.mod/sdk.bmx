@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.8.0"
+ModuleInfo "Version: 0.9.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -31,6 +31,8 @@ ModuleInfo "History: 0.7.0"
 ModuleInfo "History: Added leaderboard multi-user score queries."
 ModuleInfo "History: 0.8.0"
 ModuleInfo "History: Added User Info account queries and cached profile copies."
+ModuleInfo "History: 0.9.0"
+ModuleInfo "History: Added User Info display-name and external-account lookups."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -243,6 +245,24 @@ Enum EEOSExternalCredentialType
 	ViveportUserToken = 19
 End Enum
 
+Enum EEOSExternalAccountType
+	Epic = 0
+	Steam = 1
+	PSN = 2
+	XBL = 3
+	Discord = 4
+	GOG = 5
+	Nintendo = 6
+	Uplay = 7
+	OpenID = 8
+	Apple = 9
+	Google = 10
+	Oculus = 11
+	Itchio = 12
+	Amazon = 13
+	Viveport = 14
+End Enum
+
 Enum EEOSAuthScopeFlags Flags
 	None = 0
 	BasicProfile = $1
@@ -339,6 +359,16 @@ Type TEOSUserInfoData
 	Field DisplayName:String
 	Field PreferredLanguage:String
 	Field Nickname:String
+	Field DisplayNameSanitized:String
+End Type
+
+Rem
+bbdoc: One linked external account copied from the local User Info cache.
+End Rem
+Type TEOSExternalUserInfo
+	Field AccountType:EEOSExternalAccountType
+	Field AccountId:String
+	Field DisplayName:String
 	Field DisplayNameSanitized:String
 End Type
 
@@ -603,6 +633,14 @@ End Interface
 
 Interface IEOSUserInfoQueryListener
 	Method OnEOSUserInfoQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+End Interface
+
+Interface IEOSUserInfoQueryByDisplayNameListener
+	Method OnEOSUserInfoQueryByDisplayName(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, displayName:String)
+End Interface
+
+Interface IEOSUserInfoQueryByExternalAccountListener
+	Method OnEOSUserInfoQueryByExternalAccount(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, externalAccountId:String, accountType:EEOSExternalAccountType)
 End Interface
 
 Interface IEOSLogListener
@@ -1419,6 +1457,68 @@ Type TEOSUserInfoQueryRequest
 	End Method
 End Type
 
+Type TEOSUserInfoQueryByDisplayNameRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSUserInfoQueryByDisplayNameListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSUserInfoQueryByDisplayNameRequest(owner:TEOSPlatform, listener:IEOSUserInfoQueryByDisplayNameListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryByDisplayNameRequest = New TEOSUserInfoQueryByDisplayNameRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSUserInfoQueryByDisplayNameRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, displayName:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSUserInfoQueryByDisplayNameListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSUserInfoQueryByDisplayName(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), displayName)
+	End Function
+
+	Function _Cancel(request:TEOSUserInfoQueryByDisplayNameRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSUserInfoQueryByExternalAccountRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSUserInfoQueryByExternalAccountListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSUserInfoQueryByExternalAccountRequest(owner:TEOSPlatform, listener:IEOSUserInfoQueryByExternalAccountListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryByExternalAccountRequest = New TEOSUserInfoQueryByExternalAccountRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSUserInfoQueryByExternalAccountRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, externalAccountId:String, accountType:EEOSExternalAccountType) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSUserInfoQueryByExternalAccountListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSUserInfoQueryByExternalAccount(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), externalAccountId, accountType)
+	End Function
+
+	Function _Cancel(request:TEOSUserInfoQueryByExternalAccountRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null, "", EEOSExternalAccountType.Epic)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1991,6 +2091,26 @@ Type TEOSUserInfoInterface
 	End Method
 
 	Rem
+	bbdoc: Finds an Epic Account by its raw display name and caches its profile.
+	End Rem
+	Method QueryByDisplayName:TEOSUserInfoQueryByDisplayNameRequest(localUserId:TEOSEpicAccountId, displayName:String, listener:IEOSUserInfoQueryByDisplayNameListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not displayName Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryByDisplayNameRequest = TEOSUserInfoQueryByDisplayNameRequest._Create(_owner, listener)
+		bmx_eos_user_info_query_by_display_name(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), displayName)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Finds an Epic Account by a linked external account and caches its profile.
+	End Rem
+	Method QueryByExternalAccount:TEOSUserInfoQueryByExternalAccountRequest(localUserId:TEOSEpicAccountId, externalAccountId:String, accountType:EEOSExternalAccountType, listener:IEOSUserInfoQueryByExternalAccountListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not externalAccountId Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryByExternalAccountRequest = TEOSUserInfoQueryByExternalAccountRequest._Create(_owner, listener)
+		bmx_eos_user_info_query_by_external_account(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), externalAccountId, accountType)
+		Return request
+	End Method
+
+	Rem
 	bbdoc: Copies cached profile information populated by a successful Query call.
 	End Rem
 	Method CopyUserInfo:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, info:TEOSUserInfoData Var)
@@ -2010,6 +2130,52 @@ Type TEOSUserInfoInterface
 		End If
 		Return result
 	End Method
+
+	Method ExternalUserInfoCount:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return 0
+		Return Int(bmx_eos_user_info_get_external_count(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle()))
+	End Method
+
+	Method CopyExternalUserInfoByIndex:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, index:Int, info:TEOSExternalUserInfo Var)
+		info = Null
+		If Not _ValidIds(localUserId, targetUserId) Or index < 0 Then Return EEOSResult.InvalidParameters
+		Local accountType:EEOSExternalAccountType, accountId:String, displayName:String, displayNameSanitized:String
+		Local result:EEOSResult = bmx_eos_user_info_copy_external_by_index(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle(), UInt(index), accountType, accountId, displayName, displayNameSanitized)
+		If result = EEOSResult.Success Then info = _ExternalInfo(accountType, accountId, displayName, displayNameSanitized)
+		Return result
+	End Method
+
+	Method CopyExternalUserInfoByAccountType:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, requestedType:EEOSExternalAccountType, info:TEOSExternalUserInfo Var)
+		info = Null
+		If Not _ValidIds(localUserId, targetUserId) Then Return EEOSResult.InvalidParameters
+		Local accountType:EEOSExternalAccountType, accountId:String, displayName:String, displayNameSanitized:String
+		Local result:EEOSResult = bmx_eos_user_info_copy_external_by_type(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle(), requestedType, accountType, accountId, displayName, displayNameSanitized)
+		If result = EEOSResult.Success Then info = _ExternalInfo(accountType, accountId, displayName, displayNameSanitized)
+		Return result
+	End Method
+
+	Method CopyExternalUserInfoByAccountId:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, requestedAccountId:String, info:TEOSExternalUserInfo Var)
+		info = Null
+		If Not _ValidIds(localUserId, targetUserId) Or Not requestedAccountId Then Return EEOSResult.InvalidParameters
+		Local accountType:EEOSExternalAccountType, accountId:String, displayName:String, displayNameSanitized:String
+		Local result:EEOSResult = bmx_eos_user_info_copy_external_by_id(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle(), requestedAccountId, accountType, accountId, displayName, displayNameSanitized)
+		If result = EEOSResult.Success Then info = _ExternalInfo(accountType, accountId, displayName, displayNameSanitized)
+		Return result
+	End Method
+
+	Private
+	Method _ValidIds:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid() And targetUserId And targetUserId.IsValid()
+	End Method
+
+	Function _ExternalInfo:TEOSExternalUserInfo(accountType:EEOSExternalAccountType, accountId:String, displayName:String, displayNameSanitized:String)
+		Local info:TEOSExternalUserInfo = New TEOSExternalUserInfo
+		info.AccountType = accountType
+		info.AccountId = accountId
+		info.DisplayName = displayName
+		info.DisplayNameSanitized = displayNameSanitized
+		Return info
+	End Function
 End Type
 
 Private
@@ -2080,7 +2246,13 @@ Extern
 	Function bmx_eos_leaderboards_copy_user_score_by_user:EEOSResult(leaderboardsHandle:Byte Ptr, requestedUserHandle:Byte Ptr, statName:String, userHandle:Byte Ptr Var, score:Int Var)
 
 	Function bmx_eos_user_info_query(platformHandle:Byte Ptr, userInfoHandle:Byte Ptr, request:TEOSUserInfoQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_user_info_query_by_display_name(platformHandle:Byte Ptr, userInfoHandle:Byte Ptr, request:TEOSUserInfoQueryByDisplayNameRequest, localUserHandle:Byte Ptr, displayName:String)
+	Function bmx_eos_user_info_query_by_external_account(platformHandle:Byte Ptr, userInfoHandle:Byte Ptr, request:TEOSUserInfoQueryByExternalAccountRequest, localUserHandle:Byte Ptr, externalAccountId:String, accountType:EEOSExternalAccountType)
 	Function bmx_eos_user_info_copy:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, userHandle:Byte Ptr Var, country:String Var, displayName:String Var, preferredLanguage:String Var, nickname:String Var, displayNameSanitized:String Var)
+	Function bmx_eos_user_info_get_external_count:UInt(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_user_info_copy_external_by_index:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
+	Function bmx_eos_user_info_copy_external_by_type:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedType:EEOSExternalAccountType, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
+	Function bmx_eos_user_info_copy_external_by_id:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedAccountId:String, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

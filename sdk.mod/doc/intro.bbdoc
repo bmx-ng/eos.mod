@@ -34,6 +34,8 @@ pairs, with results cached separately for each stat name.
 Platform.UserInfo() queries Epic Account profiles into the SDK cache. After a
 successful query, CopyUserInfo() returns an independent managed object containing
 the display name and any other profile fields permitted for the application.
+Profiles may also be found by display name or linked external account. Cached
+external-account records can be counted and copied by index, type, or ID.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

@@ -15,7 +15,7 @@ The current foundation covers:
 - Stats ingest and query, with copied access to cached stat results
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
 - Leaderboard definition, ranked-record, and multi-user score queries
-- User Info account queries and copied access to cached profile data
+- User Info account, display-name, and external-account queries with copied cache access
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -84,7 +84,9 @@ It then demonstrates an ad-hoc score query for the signed-in Product User.
 
 The [`user_info.bmx`](sdk.mod/examples/user_info.bmx) example signs in through
 Epic Account Services, queries the signed-in account's profile, and copies its
-display name and other permitted fields from the local EOS cache.
+display name, permitted profile fields, and linked external-account information
+from the local EOS cache. The interface also supports finding an account by its
+display name or by a linked external account.
 
 ## Status and roadmap
 
@@ -92,7 +94,7 @@ The suggested implementation sequence is:
 
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
 2. Achievements, Stats, and Leaderboards (core interfaces implemented)
-3. User Info (core account query implemented; lookup helpers remain), Friends, and Presence
+3. User Info (core implemented), Friends, and Presence
 4. Lobbies and Sessions
 5. P2P
 6. Player Data Storage and Title Storage

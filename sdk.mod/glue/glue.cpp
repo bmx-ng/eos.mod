@@ -52,6 +52,10 @@ void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Complete(BBObject *, EOS_ER
 void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Cancel(BBObject *);
 void eos_sdk_TEOSUserInfoQueryRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId);
 void eos_sdk_TEOSUserInfoQueryRequest__Cancel(BBObject *);
+void eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId, BBString *);
+void eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Cancel(BBObject *);
+void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId, BBString *, EOS_EExternalAccountType);
+void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -81,7 +85,9 @@ enum class RequestKind {
 	LeaderboardsQueryDefinitions,
 	LeaderboardsQueryRanks,
 	LeaderboardsQueryUserScores,
-	UserInfoQuery
+	UserInfoQuery,
+	UserInfoQueryByDisplayName,
+	UserInfoQueryByExternalAccount
 };
 
 struct RequestContext {
@@ -165,6 +171,12 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::UserInfoQuery:
 			eos_sdk_TEOSUserInfoQueryRequest__Cancel(context->request);
+			break;
+		case RequestKind::UserInfoQueryByDisplayName:
+			eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Cancel(context->request);
+			break;
+		case RequestKind::UserInfoQueryByExternalAccount:
+			eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -454,6 +466,26 @@ void EOS_CALL UserInfoQueryCallback(const EOS_UserInfo_QueryUserInfoCallbackInfo
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSUserInfoQueryRequest__Complete(context->request, data->ResultCode,
 		data->LocalUserId, data->TargetUserId);
+	if (terminal) delete context;
+}
+
+void EOS_CALL UserInfoQueryByDisplayNameCallback(const EOS_UserInfo_QueryUserInfoByDisplayNameCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId, ToBBString(data->DisplayName));
+	if (terminal) delete context;
+}
+
+void EOS_CALL UserInfoQueryByExternalAccountCallback(const EOS_UserInfo_QueryUserInfoByExternalAccountCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId, ToBBString(data->ExternalAccountId), data->AccountType);
 	if (terminal) delete context;
 }
 
@@ -1188,6 +1220,30 @@ void bmx_eos_user_info_query(EOS_HPlatform platform, EOS_HUserInfo userInfo,
 	EOS_UserInfo_QueryUserInfo(userInfo, &options, context, UserInfoQueryCallback);
 }
 
+void bmx_eos_user_info_query_by_display_name(EOS_HPlatform platform, EOS_HUserInfo userInfo,
+	BBObject *request, EOS_EpicAccountId localUserId, BBString *maxDisplayName) {
+	UTF8String displayName(maxDisplayName);
+	EOS_UserInfo_QueryUserInfoByDisplayNameOptions options{};
+	options.ApiVersion = EOS_USERINFO_QUERYUSERINFOBYDISPLAYNAME_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.DisplayName = displayName.required();
+	auto *context = CreateRequest(platform, request, RequestKind::UserInfoQueryByDisplayName);
+	EOS_UserInfo_QueryUserInfoByDisplayName(userInfo, &options, context, UserInfoQueryByDisplayNameCallback);
+}
+
+void bmx_eos_user_info_query_by_external_account(EOS_HPlatform platform, EOS_HUserInfo userInfo,
+	BBObject *request, EOS_EpicAccountId localUserId, BBString *maxExternalAccountId,
+	EOS_EExternalAccountType accountType) {
+	UTF8String externalAccountId(maxExternalAccountId);
+	EOS_UserInfo_QueryUserInfoByExternalAccountOptions options{};
+	options.ApiVersion = EOS_USERINFO_QUERYUSERINFOBYEXTERNALACCOUNT_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.ExternalAccountId = externalAccountId.required();
+	options.AccountType = accountType;
+	auto *context = CreateRequest(platform, request, RequestKind::UserInfoQueryByExternalAccount);
+	EOS_UserInfo_QueryUserInfoByExternalAccount(userInfo, &options, context, UserInfoQueryByExternalAccountCallback);
+}
+
 EOS_EResult bmx_eos_user_info_copy(EOS_HUserInfo userInfo,
 	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId,
 	EOS_EpicAccountId *userId, BBString **country, BBString **displayName,
@@ -1207,6 +1263,70 @@ EOS_EResult bmx_eos_user_info_copy(EOS_HUserInfo userInfo,
 	*displayNameSanitized = ToBBString(info->DisplayNameSanitized);
 	EOS_UserInfo_Release(info);
 	return result;
+}
+
+uint32_t bmx_eos_user_info_get_external_count(EOS_HUserInfo userInfo,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId) {
+	EOS_UserInfo_GetExternalUserInfoCountOptions options{};
+	options.ApiVersion = EOS_USERINFO_GETEXTERNALUSERINFOCOUNT_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	return EOS_UserInfo_GetExternalUserInfoCount(userInfo, &options);
+}
+
+static EOS_EResult CopyExternalUserInfo(EOS_UserInfo_ExternalUserInfo *info, EOS_EResult result,
+	EOS_EExternalAccountType *accountType, BBString **accountId, BBString **displayName,
+	BBString **displayNameSanitized) {
+	if (result != EOS_EResult::EOS_Success || !info) return result;
+	*accountType = info->AccountType;
+	*accountId = ToBBString(info->AccountId);
+	*displayName = ToBBString(info->DisplayName);
+	*displayNameSanitized = ToBBString(info->DisplayNameSanitized);
+	EOS_UserInfo_ExternalUserInfo_Release(info);
+	return result;
+}
+
+EOS_EResult bmx_eos_user_info_copy_external_by_index(EOS_HUserInfo userInfo,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId, uint32_t index,
+	EOS_EExternalAccountType *accountType, BBString **accountId, BBString **displayName,
+	BBString **displayNameSanitized) {
+	EOS_UserInfo_CopyExternalUserInfoByIndexOptions options{};
+	options.ApiVersion = EOS_USERINFO_COPYEXTERNALUSERINFOBYINDEX_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.Index = index;
+	EOS_UserInfo_ExternalUserInfo *info = nullptr;
+	EOS_EResult result = EOS_UserInfo_CopyExternalUserInfoByIndex(userInfo, &options, &info);
+	return CopyExternalUserInfo(info, result, accountType, accountId, displayName, displayNameSanitized);
+}
+
+EOS_EResult bmx_eos_user_info_copy_external_by_type(EOS_HUserInfo userInfo,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId, EOS_EExternalAccountType requestedType,
+	EOS_EExternalAccountType *accountType, BBString **accountId, BBString **displayName,
+	BBString **displayNameSanitized) {
+	EOS_UserInfo_CopyExternalUserInfoByAccountTypeOptions options{};
+	options.ApiVersion = EOS_USERINFO_COPYEXTERNALUSERINFOBYACCOUNTTYPE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.AccountType = requestedType;
+	EOS_UserInfo_ExternalUserInfo *info = nullptr;
+	EOS_EResult result = EOS_UserInfo_CopyExternalUserInfoByAccountType(userInfo, &options, &info);
+	return CopyExternalUserInfo(info, result, accountType, accountId, displayName, displayNameSanitized);
+}
+
+EOS_EResult bmx_eos_user_info_copy_external_by_id(EOS_HUserInfo userInfo,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId, BBString *maxRequestedAccountId,
+	EOS_EExternalAccountType *accountType, BBString **accountId, BBString **displayName,
+	BBString **displayNameSanitized) {
+	UTF8String requestedAccountId(maxRequestedAccountId);
+	EOS_UserInfo_CopyExternalUserInfoByAccountIdOptions options{};
+	options.ApiVersion = EOS_USERINFO_COPYEXTERNALUSERINFOBYACCOUNTID_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	options.AccountId = requestedAccountId.required();
+	EOS_UserInfo_ExternalUserInfo *info = nullptr;
+	EOS_EResult result = EOS_UserInfo_CopyExternalUserInfoByAccountId(userInfo, &options, &info);
+	return CopyExternalUserInfo(info, result, accountType, accountId, displayName, displayNameSanitized);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {
