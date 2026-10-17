@@ -19,7 +19,7 @@ The current foundation covers:
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
 - Lobby creation, search, joining, invitations, leaving, destruction, and copied lobby/member snapshots
-- P2P packet send/receive and explicit peer/socket connection control
+- P2P packet send/receive, explicit peer/socket connection control, and connection notifications
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See

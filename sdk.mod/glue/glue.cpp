@@ -107,6 +107,14 @@ void eos_sdk_TEOSLobbyInviteReceivedSubscription__Notify(BBObject *, BBString *,
 void eos_sdk_TEOSLobbyInviteReceivedSubscription__Cancel(BBObject *);
 void eos_sdk_TEOSLobbyInviteAcceptedSubscription__Notify(BBObject *, BBString *, EOS_ProductUserId, EOS_ProductUserId, BBString *);
 void eos_sdk_TEOSLobbyInviteAcceptedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSP2PConnectionRequestSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ProductUserId, BBString *);
+void eos_sdk_TEOSP2PConnectionRequestSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSP2PConnectionEstablishedSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ProductUserId, BBString *, EOS_EConnectionEstablishedType, EOS_ENetworkConnectionType);
+void eos_sdk_TEOSP2PConnectionEstablishedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSP2PConnectionInterruptedSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ProductUserId, BBString *);
+void eos_sdk_TEOSP2PConnectionInterruptedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSP2PConnectionClosedSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ProductUserId, BBString *, EOS_EConnectionClosedReason);
+void eos_sdk_TEOSP2PConnectionClosedSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -368,6 +376,24 @@ struct LobbyNotificationContext {
 
 std::vector<LobbyNotificationContext *> g_lobbyNotifications;
 
+enum class P2PNotificationKind { ConnectionRequest, Established, Interrupted, Closed };
+
+struct P2PNotificationContext {
+	EOS_HPlatform platform;
+	EOS_HP2P p2p;
+	EOS_NotificationId id;
+	P2PNotificationKind kind;
+	BBObject *subscription;
+
+	P2PNotificationContext(EOS_HPlatform platform, EOS_HP2P p2p,
+		P2PNotificationKind kind, BBObject *subscription)
+		: platform(platform), p2p(p2p), id(EOS_INVALID_NOTIFICATIONID), kind(kind),
+		  subscription(subscription) { BBRETAIN(subscription); }
+	~P2PNotificationContext() { BBRELEASE(subscription); }
+};
+
+std::vector<P2PNotificationContext *> g_p2pNotifications;
+
 void RemoveAchievementNotification(AchievementNotificationContext *context) {
 	if (!context) return;
 	if (context->id != EOS_INVALID_NOTIFICATIONID) {
@@ -435,6 +461,21 @@ void RemoveLobbyNotification(LobbyNotificationContext *context) {
 	}
 	auto found = std::find(g_lobbyNotifications.begin(), g_lobbyNotifications.end(), context);
 	if (found != g_lobbyNotifications.end()) g_lobbyNotifications.erase(found);
+	delete context;
+}
+
+void RemoveP2PNotification(P2PNotificationContext *context) {
+	if (!context) return;
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		switch (context->kind) {
+		case P2PNotificationKind::ConnectionRequest: EOS_P2P_RemoveNotifyPeerConnectionRequest(context->p2p, context->id); break;
+		case P2PNotificationKind::Established: EOS_P2P_RemoveNotifyPeerConnectionEstablished(context->p2p, context->id); break;
+		case P2PNotificationKind::Interrupted: EOS_P2P_RemoveNotifyPeerConnectionInterrupted(context->p2p, context->id); break;
+		case P2PNotificationKind::Closed: EOS_P2P_RemoveNotifyPeerConnectionClosed(context->p2p, context->id); break;
+		}
+	}
+	auto found = std::find(g_p2pNotifications.begin(), g_p2pNotifications.end(), context);
+	if (found != g_p2pNotifications.end()) g_p2pNotifications.erase(found);
 	delete context;
 }
 
@@ -517,6 +558,28 @@ void CancelPlatformNotifications(EOS_HPlatform platform) {
 			case LobbyNotificationKind::InviteAccepted:
 				EOS_Lobby_RemoveNotifyLobbyInviteAccepted(context->lobby, context->id);
 				eos_sdk_TEOSLobbyInviteAcceptedSubscription__Cancel(context->subscription); break;
+			}
+		}
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_p2pNotifications.size();) {
+		auto *context = g_p2pNotifications[index];
+		if (context->platform != platform) { ++index; continue; }
+		g_p2pNotifications.erase(g_p2pNotifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			switch (context->kind) {
+			case P2PNotificationKind::ConnectionRequest:
+				EOS_P2P_RemoveNotifyPeerConnectionRequest(context->p2p, context->id);
+				eos_sdk_TEOSP2PConnectionRequestSubscription__Cancel(context->subscription); break;
+			case P2PNotificationKind::Established:
+				EOS_P2P_RemoveNotifyPeerConnectionEstablished(context->p2p, context->id);
+				eos_sdk_TEOSP2PConnectionEstablishedSubscription__Cancel(context->subscription); break;
+			case P2PNotificationKind::Interrupted:
+				EOS_P2P_RemoveNotifyPeerConnectionInterrupted(context->p2p, context->id);
+				eos_sdk_TEOSP2PConnectionInterruptedSubscription__Cancel(context->subscription); break;
+			case P2PNotificationKind::Closed:
+				EOS_P2P_RemoveNotifyPeerConnectionClosed(context->p2p, context->id);
+				eos_sdk_TEOSP2PConnectionClosedSubscription__Cancel(context->subscription); break;
 			}
 		}
 		delete context;
@@ -983,6 +1046,39 @@ void EOS_CALL LobbyInviteAcceptedCallback(const EOS_Lobby_LobbyInviteAcceptedCal
 	eos_sdk_TEOSLobbyInviteAcceptedSubscription__Notify(context->subscription,
 		ToBBString(data->InviteId), data->LocalUserId, data->TargetUserId,
 		ToBBString(data->LobbyId));
+}
+
+void EOS_CALL P2PConnectionRequestCallback(const EOS_P2P_OnIncomingConnectionRequestInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<P2PNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSP2PConnectionRequestSubscription__Notify(context->subscription,
+		data->LocalUserId, data->RemoteUserId,
+		ToBBString(data->SocketId ? data->SocketId->SocketName : nullptr));
+}
+
+void EOS_CALL P2PConnectionEstablishedCallback(const EOS_P2P_OnPeerConnectionEstablishedInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<P2PNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSP2PConnectionEstablishedSubscription__Notify(context->subscription,
+		data->LocalUserId, data->RemoteUserId,
+		ToBBString(data->SocketId ? data->SocketId->SocketName : nullptr),
+		data->ConnectionType, data->NetworkType);
+}
+
+void EOS_CALL P2PConnectionInterruptedCallback(const EOS_P2P_OnPeerConnectionInterruptedInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<P2PNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSP2PConnectionInterruptedSubscription__Notify(context->subscription,
+		data->LocalUserId, data->RemoteUserId,
+		ToBBString(data->SocketId ? data->SocketId->SocketName : nullptr));
+}
+
+void EOS_CALL P2PConnectionClosedCallback(const EOS_P2P_OnRemoteConnectionClosedInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<P2PNotificationContext *>(data->ClientData);
+	eos_sdk_TEOSP2PConnectionClosedSubscription__Notify(context->subscription,
+		data->LocalUserId, data->RemoteUserId,
+		ToBBString(data->SocketId ? data->SocketId->SocketName : nullptr), data->Reason);
 }
 
 } // namespace
@@ -2662,6 +2758,72 @@ EOS_EResult bmx_eos_p2p_close_socket(EOS_HP2P p2p, EOS_ProductUserId localUserId
 	options.LocalUserId = localUserId;
 	options.SocketId = &socket;
 	return EOS_P2P_CloseConnections(p2p, &options);
+}
+
+uint64_t bmx_eos_p2p_add_notify_connection_request(EOS_HPlatform platform, EOS_HP2P p2p,
+	BBObject *subscription, EOS_ProductUserId localUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	auto *context = new P2PNotificationContext(platform, p2p,
+		P2PNotificationKind::ConnectionRequest, subscription);
+	EOS_P2P_AddNotifyPeerConnectionRequestOptions options{};
+	options.ApiVersion = EOS_P2P_ADDNOTIFYPEERCONNECTIONREQUEST_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.SocketId = socket.SocketName[0] ? &socket : nullptr;
+	context->id = EOS_P2P_AddNotifyPeerConnectionRequest(p2p, &options, context, P2PConnectionRequestCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_p2pNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_p2p_add_notify_connection_established(EOS_HPlatform platform, EOS_HP2P p2p,
+	BBObject *subscription, EOS_ProductUserId localUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	auto *context = new P2PNotificationContext(platform, p2p,
+		P2PNotificationKind::Established, subscription);
+	EOS_P2P_AddNotifyPeerConnectionEstablishedOptions options{};
+	options.ApiVersion = EOS_P2P_ADDNOTIFYPEERCONNECTIONESTABLISHED_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.SocketId = socket.SocketName[0] ? &socket : nullptr;
+	context->id = EOS_P2P_AddNotifyPeerConnectionEstablished(p2p, &options, context, P2PConnectionEstablishedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_p2pNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_p2p_add_notify_connection_interrupted(EOS_HPlatform platform, EOS_HP2P p2p,
+	BBObject *subscription, EOS_ProductUserId localUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	auto *context = new P2PNotificationContext(platform, p2p,
+		P2PNotificationKind::Interrupted, subscription);
+	EOS_P2P_AddNotifyPeerConnectionInterruptedOptions options{};
+	options.ApiVersion = EOS_P2P_ADDNOTIFYPEERCONNECTIONINTERRUPTED_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.SocketId = socket.SocketName[0] ? &socket : nullptr;
+	context->id = EOS_P2P_AddNotifyPeerConnectionInterrupted(p2p, &options, context, P2PConnectionInterruptedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_p2pNotifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_p2p_add_notify_connection_closed(EOS_HPlatform platform, EOS_HP2P p2p,
+	BBObject *subscription, EOS_ProductUserId localUserId, BBString *maxSocketName) {
+	EOS_P2P_SocketId socket = P2PSocketId(maxSocketName);
+	auto *context = new P2PNotificationContext(platform, p2p,
+		P2PNotificationKind::Closed, subscription);
+	EOS_P2P_AddNotifyPeerConnectionClosedOptions options{};
+	options.ApiVersion = EOS_P2P_ADDNOTIFYPEERCONNECTIONCLOSED_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.SocketId = socket.SocketName[0] ? &socket : nullptr;
+	context->id = EOS_P2P_AddNotifyPeerConnectionClosed(p2p, &options, context, P2PConnectionClosedCallback);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) { delete context; return 0; }
+	g_p2pNotifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_p2p_remove_notify(uint64_t id) {
+	auto found = std::find_if(g_p2pNotifications.begin(), g_p2pNotifications.end(),
+		[id](const P2PNotificationContext *context) { return context->id == id; });
+	if (found != g_p2pNotifications.end()) RemoveP2PNotification(*found);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

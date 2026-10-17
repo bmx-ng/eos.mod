@@ -72,6 +72,8 @@ Platform.P2P() sends and receives packets of up to 1170 bytes using named
 sockets and byte-sized channels. Reliability and delayed-delivery policy are
 selected for each send. Connections can be explicitly accepted or closed per
 peer, or closed together by socket name.
+Removable subscriptions report incoming requests, established or re-established
+connections, temporary interruptions, and final connection closure.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

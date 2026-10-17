@@ -378,6 +378,32 @@ Enum EEOSPacketReliability
 	ReliableOrdered = 2
 End Enum
 
+Enum EEOSConnectionEstablishedType
+	NewConnection = 0
+	Reconnection = 1
+End Enum
+
+Enum EEOSNetworkConnectionType
+	NoConnection = 0
+	DirectConnection = 1
+	RelayedConnection = 2
+End Enum
+
+Enum EEOSConnectionClosedReason
+	Unknown = 0
+	ClosedByLocalUser = 1
+	ClosedByPeer = 2
+	TimedOut = 3
+	TooManyConnections = 4
+	InvalidMessage = 5
+	InvalidData = 6
+	ConnectionFailed = 7
+	ConnectionClosed = 8
+	NegotiationFailed = 9
+	UnexpectedError = 10
+	ConnectionIgnored = 11
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -913,6 +939,22 @@ End Interface
 
 Interface IEOSLobbyInviteAcceptedListener
 	Method OnEOSLobbyInviteAccepted(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId, lobbyId:String)
+End Interface
+
+Interface IEOSP2PConnectionRequestListener
+	Method OnEOSP2PConnectionRequest(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+End Interface
+
+Interface IEOSP2PConnectionEstablishedListener
+	Method OnEOSP2PConnectionEstablished(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String, connectionType:EEOSConnectionEstablishedType, networkType:EEOSNetworkConnectionType)
+End Interface
+
+Interface IEOSP2PConnectionInterruptedListener
+	Method OnEOSP2PConnectionInterrupted(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
+End Interface
+
+Interface IEOSP2PConnectionClosedListener
+	Method OnEOSP2PConnectionClosed(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String, reason:EEOSConnectionClosedReason)
 End Interface
 
 Interface IEOSLogListener
@@ -3923,6 +3965,106 @@ bbdoc: EOS peer-to-peer packet transport for one platform.
 about: Socket names are application-defined identifiers of 1 to 32 permitted
 characters. Packet payloads are limited to #EOS_P2P_MAX_PACKET_SIZE bytes.
 End Rem
+Type TEOSP2PConnectionRequestSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionRequestListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionRequestSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionRequestListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionRequestSubscription = New TEOSP2PConnectionRequestSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionRequestSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionRequest(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionRequestSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionEstablishedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionEstablishedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionEstablishedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionEstablishedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionEstablishedSubscription = New TEOSP2PConnectionEstablishedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionEstablishedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String, connectionType:EEOSConnectionEstablishedType, networkType:EEOSNetworkConnectionType) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionEstablished(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName, connectionType, networkType)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionEstablishedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionInterruptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionInterruptedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionInterruptedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionInterruptedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionInterruptedSubscription = New TEOSP2PConnectionInterruptedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionInterruptedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionInterrupted(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionInterruptedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
+Type TEOSP2PConnectionClosedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PConnectionClosedListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PConnectionClosedSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionClosedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PConnectionClosedSubscription = New TEOSP2PConnectionClosedSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PConnectionClosedSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String, reason:EEOSConnectionClosedReason) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionClosed(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName, reason)
+	End Function
+	Function _Cancel(subscription:TEOSP2PConnectionClosedSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
 Type TEOSP2P
 	Private
 	Field _owner:TEOSPlatform
@@ -3987,6 +4129,38 @@ Type TEOSP2P
 		Return bmx_eos_p2p_close_socket(_handle, localUserId._NativeHandle(), socketName)
 	End Method
 
+	Method AddNotifyConnectionRequest:TEOSP2PConnectionRequestSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionRequestListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionRequestSubscription = TEOSP2PConnectionRequestSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_request(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionEstablished:TEOSP2PConnectionEstablishedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionEstablishedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionEstablishedSubscription = TEOSP2PConnectionEstablishedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_established(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionInterrupted:TEOSP2PConnectionInterruptedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionInterruptedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionInterruptedSubscription = TEOSP2PConnectionInterruptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_interrupted(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyConnectionClosed:TEOSP2PConnectionClosedSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionClosedListener)
+		If Not _ValidSubscription(localUserId, socketName, listener <> Null) Then Return Null
+		Local subscription:TEOSP2PConnectionClosedSubscription = TEOSP2PConnectionClosedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_connection_closed(_owner._NativeHandle(), _handle, subscription, localUserId._NativeHandle(), socketName))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
 	Private
 	Method _ValidLocalUser:Int(localUserId:TEOSProductUserId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
@@ -3998,6 +4172,10 @@ Type TEOSP2P
 
 	Method _ValidSocket:Int(socketName:String)
 		Return socketName.Length >= 1 And socketName.Length <= 32
+	End Method
+
+	Method _ValidSubscription:Int(localUserId:TEOSProductUserId, socketName:String, hasListener:Int)
+		Return _ValidLocalUser(localUserId) And (Not socketName Or _ValidSocket(socketName)) And hasListener
 	End Method
 End Type
 
@@ -4158,6 +4336,11 @@ Extern
 	Function bmx_eos_p2p_accept:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_close:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_close_socket:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_request:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionRequestSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_established:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionEstablishedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_interrupted:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionInterruptedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_connection_closed:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionClosedSubscription, localUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_remove_notify(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
