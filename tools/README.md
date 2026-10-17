@@ -53,7 +53,7 @@ granted. If Connect reports that the account has no Product User, the app asks
 for explicit confirmation before **C** creates one.
 
 After Auth succeeds, the app queries the signed-in account's User Info profile,
-friends, and blocklist.
+friends, blocklist, and presence.
 After Connect succeeds, it performs read-only Stats, Achievements, and
 Leaderboards queries and reports the number of configured definitions and
 cached player values. It never ingests a stat or unlocks an achievement.

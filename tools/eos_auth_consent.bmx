@@ -25,6 +25,7 @@ Global pendingProductUser:Int
 Global writeMode:Int
 Global displayedFriendCount:Int
 Global displayedBlockedUserCount:Int
+Global displayedPresenceStatus:EEOSPresenceStatus
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -32,11 +33,12 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field UserInfo:TEOSUserInfoInterface
 	Field Friends:TEOSFriends
+	Field Presence:TEOSPresence
 	Field Stats:TEOSStats
 	Field Achievements:TEOSAchievements
 	Field Leaderboards:TEOSLeaderboards
@@ -110,7 +112,19 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		displayedFriendCount = FriendCount
 		displayedBlockedUserCount = BlockedUserCount
 		statusTitle = "Epic friends retrieved"
-		statusDetail = "Friends " + FriendCount + " | Blocked " + BlockedUserCount + " | Continuing to EOS Connect..."
+		statusDetail = "Friends " + FriendCount + " | Blocked " + BlockedUserCount + " | Checking presence..."
+		If Not Presence.Query(EpicAccountId, EpicAccountId, Self) Then Fail("Could not start Presence query", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSPresenceQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Presence query failed", result); Return
+		Local info:TEOSPresenceInfo
+		result = Presence.CopyPresence(localUserId, targetUserId, info)
+		If result <> EEOSResult.Success Then Fail("Could not copy Presence", result); Return
+		displayedPresenceStatus = info.Status
+		statusTitle = "Epic presence retrieved"
+		statusDetail = "Status " + PresenceStatusName(info.Status) + " | Continuing to EOS Connect..."
 		BeginConnect()
 	End Method
 
@@ -421,7 +435,7 @@ Function StartLogin:Int(auth:TEOSAuth, listener:TAuthConnectListener, config:Str
 
 	Local loginOptions:TEOSAuthLoginOptions = New TEOSAuthLoginOptions
 	loginOptions.Credentials = credentials
-	loginOptions.ScopeFlags = EEOSAuthScopeFlags.BasicProfile | EEOSAuthScopeFlags.FriendsList
+	loginOptions.ScopeFlags = EEOSAuthScopeFlags.BasicProfile | EEOSAuthScopeFlags.FriendsList | EEOSAuthScopeFlags.Presence
 	If Not auth Or Not auth.Login(loginOptions, listener) Then
 		statusKind = 3
 		statusTitle = "Could not start EOS login"
@@ -467,11 +481,11 @@ Function DrawScreen()
 		If done And succeeded Then
 			If writeMode Then
 				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
-				DrawText "Friends: " + displayedFriendCount + "  |  Blocked users: " + displayedBlockedUserCount, 70, 242
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
 				DrawText "The test achievement may now be permanently unlocked.", 70, 279
 			Else
 				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
-				DrawText "Friends: " + displayedFriendCount + "  |  Blocked users: " + displayedBlockedUserCount, 70, 242
+				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
 				DrawText "Zero values are valid when this test account has no data.", 70, 279
 			End If
 		Else If done Then
@@ -498,6 +512,16 @@ Function DrawScreen()
 	Flip
 End Function
 
+Function PresenceStatusName:String(status:EEOSPresenceStatus)
+	Select status
+		Case EEOSPresenceStatus.Online Return "Online"
+		Case EEOSPresenceStatus.Away Return "Away"
+		Case EEOSPresenceStatus.ExtendedAway Return "Extended away"
+		Case EEOSPresenceStatus.DoNotDisturb Return "Do not disturb"
+		Default Return "Offline"
+	End Select
+End Function
+
 Graphics WINDOW_WIDTH, WINDOW_HEIGHT, 0, 60, GRAPHICS_BACKBUFFER
 SetClsColor 22, 27, 38
 
@@ -515,7 +539,7 @@ Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 	initializeOptions.ProductName = "EOS Integration Test"
-	initializeOptions.ProductVersion = "0.10.0"
+	initializeOptions.ProductVersion = "0.11.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -548,17 +572,19 @@ Else
 			Local leaderboards:TEOSLeaderboards = platform.Leaderboards()
 			Local userInfo:TEOSUserInfoInterface = platform.UserInfo()
 			Local friends:TEOSFriends = platform.Friends()
+			Local presence:TEOSPresence = platform.Presence()
 			Local listener:TAuthConnectListener = New TAuthConnectListener
 			listener.Auth = auth
 			listener.Connect = connect
 			listener.UserInfo = userInfo
 			listener.Friends = friends
+			listener.Presence = presence
 			listener.Stats = stats
 			listener.Achievements = achievements
 			listener.Leaderboards = leaderboards
 			listener.WriteTest = writeMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Then
+			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Or Not presence Then
 				statusKind = 3
 				statusTitle = "EOS interfaces are unavailable"
 				statusDetail = "The platform did not provide Auth and Connect."
