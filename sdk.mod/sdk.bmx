@@ -986,6 +986,10 @@ Interface IEOSP2PQueryNATTypeListener
 	Method OnEOSP2PQueryNATType(result:EEOSResult, natType:EEOSNATType)
 End Interface
 
+Interface IEOSP2PIncomingPacketQueueFullListener
+	Method OnEOSP2PIncomingPacketQueueFull(maxSizeBytes:ULong, currentSizeBytes:ULong, localUserId:TEOSProductUserId, channel:Int, packetSizeBytes:UInt)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -4128,6 +4132,31 @@ Type TEOSP2PConnectionClosedSubscription
 	Method Delete(); Remove(); End Method
 End Type
 
+Type TEOSP2PIncomingPacketQueueFullSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSP2PIncomingPacketQueueFullListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSP2PIncomingPacketQueueFullSubscription(owner:TEOSPlatform, listener:IEOSP2PIncomingPacketQueueFullListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSP2PIncomingPacketQueueFullSubscription = New TEOSP2PIncomingPacketQueueFullSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSP2PIncomingPacketQueueFullSubscription, maxSizeBytes:ULong, currentSizeBytes:ULong, localUserHandle:Byte Ptr, channel:Int, packetSizeBytes:UInt) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSP2PIncomingPacketQueueFull(maxSizeBytes, currentSizeBytes, TEOSProductUserId._Create(localUserHandle), channel, packetSizeBytes)
+	End Function
+	Function _Cancel(subscription:TEOSP2PIncomingPacketQueueFullSubscription) { nomangle }
+		If subscription Then subscription._id = 0; subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong); _id = id; End Method
+	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
+	Method Delete(); Remove(); End Method
+End Type
+
 Type TEOSP2P
 	Private
 	Field _owner:TEOSPlatform
@@ -4272,6 +4301,14 @@ Type TEOSP2P
 	Method ClearPacketQueue:EEOSResult(localUserId:TEOSProductUserId, remoteUserId:TEOSProductUserId, socketName:String)
 		If Not _ValidUsers(localUserId, remoteUserId) Or Not _ValidSocket(socketName) Then Return EEOSResult.InvalidParameters
 		Return bmx_eos_p2p_clear_packet_queue(_handle, localUserId._NativeHandle(), remoteUserId._NativeHandle(), socketName)
+	End Method
+
+	Method AddNotifyIncomingPacketQueueFull:TEOSP2PIncomingPacketQueueFullSubscription(listener:IEOSP2PIncomingPacketQueueFullListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSP2PIncomingPacketQueueFullSubscription = TEOSP2PIncomingPacketQueueFullSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_p2p_add_notify_incoming_queue_full(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
 	End Method
 
 	Method AddNotifyConnectionRequest:TEOSP2PConnectionRequestSubscription(localUserId:TEOSProductUserId, socketName:String, listener:IEOSP2PConnectionRequestListener)
@@ -4490,6 +4527,7 @@ Extern
 	Function bmx_eos_p2p_set_packet_queue_size:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong, outgoingMaxSizeBytes:ULong)
 	Function bmx_eos_p2p_get_packet_queue_info:EEOSResult(p2pHandle:Byte Ptr, incomingMaxSizeBytes:ULong Var, incomingCurrentSizeBytes:ULong Var, incomingCurrentPacketCount:ULong Var, outgoingMaxSizeBytes:ULong Var, outgoingCurrentSizeBytes:ULong Var, outgoingCurrentPacketCount:ULong Var)
 	Function bmx_eos_p2p_clear_packet_queue:EEOSResult(p2pHandle:Byte Ptr, localUserHandle:Byte Ptr, remoteUserHandle:Byte Ptr, socketName:String)
+	Function bmx_eos_p2p_add_notify_incoming_queue_full:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PIncomingPacketQueueFullSubscription)
 	Function bmx_eos_p2p_add_notify_connection_request:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionRequestSubscription, localUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_add_notify_connection_established:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionEstablishedSubscription, localUserHandle:Byte Ptr, socketName:String)
 	Function bmx_eos_p2p_add_notify_connection_interrupted:ULong(platformHandle:Byte Ptr, p2pHandle:Byte Ptr, subscription:TEOSP2PConnectionInterruptedSubscription, localUserHandle:Byte Ptr, socketName:String)

@@ -5,9 +5,10 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TP2PDiagnostics Implements IEOSP2PQueryNATTypeListener
+Type TP2PDiagnostics Implements IEOSP2PQueryNATTypeListener, IEOSP2PIncomingPacketQueueFullListener
 	Field Done:Int
 	Field Success:Int
+	Field QueueFullSubscription:TEOSP2PIncomingPacketQueueFullSubscription
 
 	Method OnEOSP2PQueryNATType(result:EEOSResult, natType:EEOSNATType)
 		Print "NAT query: " + EOSResultString(result)
@@ -16,6 +17,10 @@ Type TP2PDiagnostics Implements IEOSP2PQueryNATTypeListener
 			Success = True
 		End If
 		Done = True
+	End Method
+
+	Method OnEOSP2PIncomingPacketQueueFull(maxSizeBytes:ULong, currentSizeBytes:ULong, localUserId:TEOSProductUserId, channel:Int, packetSizeBytes:UInt)
+		Print "Incoming packet queue full: " + currentSizeBytes + "/" + maxSizeBytes + " bytes; channel " + channel + "; rejected packet " + packetSizeBytes + " bytes"
 	End Method
 End Type
 
@@ -89,6 +94,12 @@ If result = EEOSResult.Success Then
 End If
 
 Local diagnostics:TP2PDiagnostics = New TP2PDiagnostics
+diagnostics.QueueFullSubscription = p2p.AddNotifyIncomingPacketQueueFull(diagnostics)
+If diagnostics.QueueFullSubscription Then
+	Print "Incoming queue-full notification: registered"
+Else
+	Print "Incoming queue-full notification: registration failed"
+End If
 If Not p2p.QueryNATType(diagnostics) Then RuntimeError "Could not start the NAT query."
 Local started:Int = MilliSecs()
 While Not diagnostics.Done And MilliSecs() - started < 60000
@@ -97,6 +108,7 @@ While Not diagnostics.Done And MilliSecs() - started < 60000
 Wend
 If Not diagnostics.Done Then Print "NAT query timed out."
 
+If diagnostics.QueueFullSubscription Then diagnostics.QueueFullSubscription.Remove()
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError "EOS shutdown failed: " + EOSResultString(result)

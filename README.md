@@ -117,7 +117,8 @@ Removable notifications report lobby updates, member-data updates, member
 join/leave status, received invitations, and accepted invitations.
 
 The [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) example reads
-the active relay policy, UDP port range, and packet-queue telemetry, round-trips
+the active relay policy, UDP port range, and packet-queue telemetry, registers
+the queue-overflow notification, round-trips
 their current values, and asynchronously queries the local NAT type. Relay and
 port settings apply to new connections; the default relay policy permits EOS
 to fall back from direct connections to Epic-hosted relays.
