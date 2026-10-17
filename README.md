@@ -1,141 +1,211 @@
-# EOS modules for BlitzMax NG
+# Epic Online Services for BlitzMax NG
 
-Independent BlitzMax NG bindings for Epic Online Services. The public namespace
-starts at `EOS.SDK`; it has no dependency on GameNet and is intended to remain
-usable by applications and by higher-level adapters alike.
+`EOS.SDK` is a BlitzMax NG binding for the Epic Online Services SDK. It gives
+desktop games access to Epic account login, player identity, social features,
+stats, achievements, leaderboards, lobbies, and peer-to-peer networking.
 
-The current foundation covers:
+The binding is independent of GameNet and can be used directly in any BlitzMax
+application. The Epic SDK itself is not included in this repository.
 
-- SDK initialization and shutdown
-- platform creation, release, and explicit main-thread ticking
-- SDK logging and result helpers
-- Epic Account ID and Product User ID wrappers
-- Auth login/logout, account enumeration, auth-token copying, and status notifications
-- Connect login/logout, Product User enumeration, explicit user creation, status notifications, and expiry warnings
-- Stats ingest and query, with copied access to cached stat results
-- Achievement definition/player-progress queries, explicit unlocks, and notifications
-- Leaderboard definition, ranked-record, and multi-user score queries
-- User Info account, display-name, and external-account queries with copied cache access
-- Friends list, blocklist, relationship-status queries, and change notifications
-- Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
-- Lobby creation, search, joining, invitations, leaving, destruction, and copied lobby/member snapshots
-- P2P packet transport, connection notifications, NAT discovery, relay/port configuration, and packet-queue controls
-- retained asynchronous requests with terminal-result and platform-release handling
+## Quick start
 
-The Epic Online Services SDK is not included in this repository. See
-[`SDK_SETUP.md`](SDK_SETUP.md) for the expected SDK version and layout.
-The Max2D setup utility in [`tools`](tools/README.md) accepts either Epic's ZIP
-or extracted directory and installs the required files for you.
+### 1. Install the module
 
-## Minimal lifecycle
+Clone the repository into the `mod` directory of the BlitzMax NG SDK you use to
+build your game:
+
+```sh
+git clone https://github.com/bmx-ng/eos.mod.git /path/to/BlitzMax/mod/eos.mod
+```
+
+This module requires the current bcc2-based BlitzMax NG toolchain.
+
+### 2. Install Epic's SDK
+
+Download **Epic Online Services SDK 1.19.2.1** from the EOS Developer Portal.
+The included Max2D setup utility accepts either the downloaded ZIP or its
+extracted directory:
+
+```sh
+cd /path/to/BlitzMax/mod/eos.mod
+bmk makeapp -r -t gui -o tools/eos-sdk-setup tools/eos_sdk_setup.bmx
+```
+
+Launch the resulting application and drop the ZIP or directory onto its window.
+It validates the SDK and copies the required headers and libraries into
+`sdk.mod/SDK`. It does not use MaxGUI.
+
+For a terminal or CI installation, run:
+
+```sh
+tools/eos-sdk-setup --headless /path/to/EOS-SDK.zip
+```
+
+See [SDK_SETUP.md](SDK_SETUP.md) for manual installation, target-specific
+runtime libraries, macOS signing and quarantine guidance, and redistribution
+notes.
+
+### 3. Configure an EOS product
+
+In the EOS Developer Portal, create or select:
+
+- a Product, Sandbox, and Deployment;
+- an Epic Account Services application;
+- a Client and Client Policy linked to that application; and
+- the feature permissions needed by your game.
+
+Basic Profile is required by Epic Account Services. Enable Friends List or
+Presence only if the application requests those scopes. Lobby, Stats,
+Achievements, Leaderboards, and P2P actions must also be permitted by the
+client policy when you use them.
+
+For local login testing, run Epic's Developer Authentication Tool and add one
+or more test accounts.
+
+### 4. Create local test configuration
+
+Copy the example configuration and fill in the values from your product and
+Developer Authentication Tool:
+
+```sh
+cp sdk.mod/examples/eos.local.conf.example sdk.mod/examples/eos.local.conf
+```
+
+`eos.local.conf` is ignored by Git. Keep client secrets, encryption keys,
+tokens, and other credentials out of source control.
+
+### 5. Complete the first login
+
+Build the interactive Max2D test client:
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_auth_consent tools/eos_auth_consent.bmx
+```
+
+On macOS, copy `sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib` into
+`tools/eos_auth_consent.app/Contents/MacOS`, then launch the `.app`. Epic's
+browser-based consent flow requires a GUI application context on macOS; a
+console build may not open it correctly.
+
+Press **A** for the Account Portal flow. Epic opens the browser so the account
+can grant consent to the application. Consent is normally requested once for
+each account/application/permission combination. If Connect reports that no
+Product User exists, press **C** when the app offers to create one.
+
+After consent has been granted, press **D** on later runs to use the faster
+Developer Authentication Tool login. The client then checks Auth, Connect,
+User Info, Friends, Presence, Stats, Achievements, and Leaderboards and reports
+the result on screen.
+
+More test modes, including lobbies, writes, and two-account P2P, are documented
+in [tools/README.md](tools/README.md).
+
+## Using `EOS.SDK`
+
+A program initializes the process-wide SDK once, creates one or more platform
+objects, ticks them from its main loop, and releases every platform before
+shutting down:
 
 ```blitzmax
 SuperStrict
 
 Framework EOS.SDK
 
-Local initOptions:TEOSInitializeOptions = New TEOSInitializeOptions
-initOptions.ProductName = "My Game"
-initOptions.ProductVersion = "1.0.0"
+Local initialize:TEOSInitializeOptions = New TEOSInitializeOptions
+initialize.ProductName = "My Game"
+initialize.ProductVersion = "1.0.0"
 
-Local result:EEOSResult = EOSInitialize(initOptions)
+Local result:EEOSResult = EOSInitialize(initialize)
 If result <> EEOSResult.Success Then
 	RuntimeError "EOS initialization failed: " + EOSResultString(result)
 End If
 
-' Create a TEOSPlatform with developer-portal values, then call Tick once per
-' main-loop iteration. Release every platform before shutdown.
+Local options:TEOSPlatformOptions = New TEOSPlatformOptions
+options.ProductId = GetEnv("EOS_PRODUCT_ID")
+options.SandboxId = GetEnv("EOS_SANDBOX_ID")
+options.DeploymentId = GetEnv("EOS_DEPLOYMENT_ID")
+options.ClientId = GetEnv("EOS_CLIENT_ID")
+options.ClientSecret = GetEnv("EOS_CLIENT_SECRET")
 
+Local platform:TEOSPlatform = TEOSPlatform.Create(options)
+If Not platform Then RuntimeError "EOS platform creation failed"
+
+' Call once per application loop iteration. EOS callbacks are delivered here.
+platform.Tick()
+
+platform.Release()
 EOSShutdown()
 ```
 
-Do not commit client secrets, encryption keys, exchange codes, access tokens,
-or other developer-portal credentials. Load them from an ignored local config
-file or the process environment.
+In a real application, keep asynchronous request objects alive until their
+terminal callback is delivered. Keep notification subscription objects for as
+long as notifications are wanted, then call `Remove`. Data returned from EOS
+cache-copy methods is owned by BlitzMax and can be retained normally.
 
-The [`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) example demonstrates
-the Developer Authentication Tool flow. Copy its
-[`eos.local.conf.example`](sdk.mod/examples/eos.local.conf.example) to the
-ignored `eos.local.conf`, supply your portal values, and run the example from
-that directory. New Product User creation is an explicit opt-in in the config.
+## Features and examples
 
-For an interactive client test, build the Max2D
-[`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) utility. It supports both
-the Account Portal consent flow and Developer Authentication Tool login, then
-continues through Connect, optional Product User creation, and read-only Stats,
-User Info, Friends, Presence, Achievements, and Leaderboards checks. On macOS, Auth UI requires a GUI `.app`
-context; see [`tools/README.md`](tools/README.md).
-An explicitly selected `write` mode can validate the complete stat ingestion,
-automatic achievement unlock, and leaderboard propagation pipeline.
+| Area | Module support | Example or test |
+| --- | --- | --- |
+| Foundation | initialization, platform lifetime, logging, result helpers | [`foundation.bmx`](sdk.mod/examples/foundation.bmx) |
+| Auth and Connect | browser or Developer Auth login, logout, Product Users, status and expiry notifications | [`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) |
+| User Info | account profiles, display-name lookup, linked external accounts | [`user_info.bmx`](sdk.mod/examples/user_info.bmx) |
+| Friends | friends, blocklist, relationship state, change notifications | [`friends.bmx`](sdk.mod/examples/friends.bmx) |
+| Presence | queries, online state, rich text, product data, notifications | [`presence.bmx`](sdk.mod/examples/presence.bmx) |
+| Stats | ingest, query, cached stat results | [`stats.bmx`](sdk.mod/examples/stats.bmx) |
+| Achievements | definitions, progress, unlocks, notifications | [`achievements.bmx`](sdk.mod/examples/achievements.bmx) |
+| Leaderboards | definitions, ranks, records, user scores | [`leaderboards.bmx`](sdk.mod/examples/leaderboards.bmx) |
+| Lobbies | create, search, join, invite, attributes, membership, leave and destroy | [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) |
+| P2P | packets, connection notifications, NAT and relay settings, queue controls | [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) and [`eos_p2p_test.bmx`](tools/eos_p2p_test.bmx) |
 
-The [`stats.bmx`](sdk.mod/examples/stats.bmx) example continues from Developer
-Auth through Connect, ingests a configured stat, queries it, and reads the
-result from the local EOS cache. Add `STAT_NAME` and `STAT_INGEST_AMOUNT` to
-your ignored local configuration; the named stat must already exist in the EOS
-Developer Portal. A successful ingest callback means the request reached EOS,
-but backend processing and achievement updates can take additional time.
+The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app is the
+best first integration test because it exercises the same complete account and
+Product User flow a game needs.
 
-The [`achievements.bmx`](sdk.mod/examples/achievements.bmx) example queries the
-configured achievement definitions and the signed-in Product User's progress.
-The deployment and client policy must permit the corresponding read actions.
-Unlock testing is disabled by default. Set both `ACHIEVEMENT_ID` and
-`UNLOCK_ACHIEVEMENT=1` only when that permanent account mutation is intended.
+## Shipping the runtime library
 
-The [`leaderboards.bmx`](sdk.mod/examples/leaderboards.bmx) example queries the
-deployment's leaderboard definitions, then fetches ranked records for the first
-configured leaderboard.
-It then demonstrates an ad-hoc score query for the signed-in Product User.
+Your finished application needs the EOS runtime matching its target:
 
-The [`user_info.bmx`](sdk.mod/examples/user_info.bmx) example signs in through
-Epic Account Services, queries the signed-in account's profile, and copies its
-display name, permitted profile fields, and linked external-account information
-from the local EOS cache. The interface also supports finding an account by its
-display name or by a linked external account.
+| Target | Runtime to package |
+| --- | --- |
+| Windows x64 | `EOSSDK-Win64-Shipping.dll` beside the executable |
+| Windows ARM64 | `EOSSDK-Win64-Shippingarm64.dll` beside the executable |
+| Linux x64 | `libEOSSDK-Linux-Shipping.so` beside the executable |
+| Linux ARM64 | `libEOSSDK-LinuxArm64-Shipping.so` beside the executable |
+| macOS x64/ARM64 | `libEOSSDK-Mac-Shipping.dylib` in the app's `Contents/MacOS` directory |
 
-The [`friends.bmx`](sdk.mod/examples/friends.bmx) example requests the Friends
-List Auth scope, queries the signed-in account's friends and blocklist, and
-prints each cached relationship status. It also registers removable friend and
-blocklist update subscriptions for the lifetime of the example.
+Windows builds link directly against Epic's DLL and do not need the Visual
+Studio `.lib` files. Sign and notarize the EOS dylib with the rest of a macOS
+application bundle. Full packaging details are in
+[SDK_SETUP.md](SDK_SETUP.md#building-and-shipping-on-each-platform).
 
-The [`presence.bmx`](sdk.mod/examples/presence.bmx) example requests the
-Presence Auth scope, queries the signed-in account, and copies its cached status,
-rich text, product information, and custom data records. Its explicit `write`
-mode publishes an online status and test rich-text value, then queries it back.
-The example also registers a removable presence-change subscription.
+## Common problems
 
-The [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) example signs in through Auth
-and Connect, creates a temporary invite-only lobby, copies its details and
-member count, publishes and reads a string attribute, then destroys it. The
-client policy must permit Lobby actions.
-Lobby searches can target a lobby ID, Product User, or string parameters such
-as the built-in `bucket` key; copied search-result details are passed to Join().
-Owned modification objects publish lobby settings and searchable string
-attributes, plus local-member string attributes.
-Invitations can be sent, queried, enumerated, rejected, and converted into a
-lobby-details handle suitable for Join().
-Removable notifications report lobby updates, member-data updates, member
-join/leave status, received invitations, and accepted invitations.
+- **The app exits before making an EOS call:** the platform runtime library is
+  probably missing from beside the executable or app-bundle executable.
+- **Account Portal does not open on macOS:** build and launch a GUI `.app`, not
+  a console executable, and ensure the EOS dylib is inside `Contents/MacOS`.
+- **`AuthScopeNotFound`:** enable the requested Friends List or Presence
+  permission on the Epic Account Services application, save it, and grant
+  consent again.
+- **The account cannot access the application:** add it as an organisation
+  member or otherwise give it access while the product is not publicly
+  available.
+- **Connect returns `InvalidUser`:** create the account's Product User. The
+  interactive test app makes this an explicit **C** action.
+- **A query succeeds but returns no rows:** confirm the definitions and client
+  policy are attached to the same Product, Sandbox, and Deployment used by the
+  application.
+- **macOS stalls while validating the dylib:** follow the narrowly scoped
+  quarantine check in [SDK_SETUP.md](SDK_SETUP.md#macos-quarantine).
 
-The [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) example reads
-the active relay policy, UDP port range, and packet-queue telemetry, registers
-the queue-overflow notification, round-trips
-their current values, and asynchronously queries the local NAT type. Relay and
-port settings apply to new connections; the default relay policy permits EOS
-to fall back from direct connections to Epic-hosted relays.
+## GameNet integration
 
-## Status and roadmap
+The separate [GameNet](https://github.com/bmx-ng/gamenet.mod) project provides
+higher-level, transport-neutral multiplayer building blocks. Its EOS adapters
+consume this binding; they are intentionally not part of `eos.mod`.
 
-The suggested implementation sequence is:
+## Roadmap
 
-1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
-2. Achievements, Stats, and Leaderboards (core interfaces implemented)
-3. User Info, Friends, and Presence (core read interfaces implemented)
-4. Lobbies and Sessions (Lobby lifecycle foundation implemented)
-5. P2P (packet transport and connection-control foundation implemented)
-6. Player Data Storage and Title Storage
-7. RTC
-8. Ecom, UI, sanctions/reports, anti-cheat, mods, KWS, and other specialised services
-
-GameNet adapters such as `GameNet.EOSOnline` and `GameNet.EOSP2P` belong in a
-different repository and should consume this binding rather than being added
-here.
+The next broad areas are Player Data Storage and Title Storage, followed by
+RTC. Ecom, sanctions/reports, anti-cheat, mods, KWS, and other specialised EOS
+services can be added as application needs justify them.
