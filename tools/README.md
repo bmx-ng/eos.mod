@@ -52,7 +52,8 @@ flow and is normally needed once per Epic account and EAS application. Press
 granted. If Connect reports that the account has no Product User, the app asks
 for explicit confirmation before **C** creates one.
 
-After Auth succeeds, the app queries the signed-in account's User Info profile.
+After Auth succeeds, the app queries the signed-in account's User Info profile,
+friends, and blocklist.
 After Connect succeeds, it performs read-only Stats, Achievements, and
 Leaderboards queries and reports the number of configured definitions and
 cached player values. It never ingests a stat or unlocks an achievement.
