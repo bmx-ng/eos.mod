@@ -5,8 +5,10 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TFriendsFlow Implements IEOSAuthLoginListener, IEOSFriendsQueryListener
+Type TFriendsFlow Implements IEOSAuthLoginListener, IEOSFriendsQueryListener, IEOSFriendsUpdateListener, IEOSBlockedUsersUpdateListener
 	Field Friends:TEOSFriends
+	Field FriendsSubscription:TEOSFriendsUpdateSubscription
+	Field BlockedSubscription:TEOSBlockedUsersUpdateSubscription
 	Field Done:Int
 	Field Success:Int
 
@@ -21,6 +23,8 @@ Type TFriendsFlow Implements IEOSAuthLoginListener, IEOSFriendsQueryListener
 
 		Local accountId:TEOSEpicAccountId = selectedAccountId
 		If Not accountId Then accountId = localUserId
+		FriendsSubscription = Friends.AddNotifyFriendsUpdate(Self)
+		BlockedSubscription = Friends.AddNotifyBlockedUsersUpdate(Self)
 		If Not Friends.Query(accountId, Self) Then
 			Print "Could not start Friends query."
 			Done = True
@@ -47,6 +51,14 @@ Type TFriendsFlow Implements IEOSAuthLoginListener, IEOSFriendsQueryListener
 		End If
 		Done = True
 	End Method
+
+	Method OnEOSFriendsUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, previousStatus:EEOSFriendsStatus, currentStatus:EEOSFriendsStatus)
+		Print "Friend status changed: " + targetUserId.ToString() + " | " + Int(previousStatus) + " -> " + Int(currentStatus)
+	End Method
+
+	Method OnEOSBlockedUsersUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, blocked:Int)
+		Print "Blocked status changed: " + targetUserId.ToString() + " | blocked " + blocked
+	End Method
 End Type
 
 Function ConfigValue:String(config:String, name:String)
@@ -69,7 +81,7 @@ Local config:String = LoadText(configPath)
 
 Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 initializeOptions.ProductName = "EOS Friends example"
-initializeOptions.ProductVersion = "0.10.0"
+initializeOptions.ProductVersion = "0.13.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
 
@@ -113,6 +125,8 @@ While Not flow.Done And MilliSecs() - started < timeout
 Wend
 If Not flow.Done Then Print "Friends query timed out."
 
+If flow.FriendsSubscription Then flow.FriendsSubscription.Remove()
+If flow.BlockedSubscription Then flow.BlockedSubscription.Remove()
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError "EOS shutdown failed: " + EOSResultString(result)

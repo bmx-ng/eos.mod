@@ -5,8 +5,9 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener, IEOSPresenceSetListener
+Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener
 	Field Presence:TEOSPresence
+	Field ChangedSubscription:TEOSPresenceChangedSubscription
 	Field Done:Int
 	Field Success:Int
 	Field WriteTest:Int
@@ -22,6 +23,7 @@ Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener, 
 		If result <> EEOSResult.Success Then Done = True; Return
 		Local accountId:TEOSEpicAccountId = selectedAccountId
 		If Not accountId Then accountId = localUserId
+		ChangedSubscription = Presence.AddNotifyPresenceChanged(Self)
 		If Not Presence.Query(accountId, accountId, Self) Then
 			Print "Could not start Presence query."
 			Done = True
@@ -69,6 +71,10 @@ Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener, 
 		If result <> EEOSResult.Success Then Done = True; Return
 		If Not Presence.Query(localUserId, localUserId, Self) Then Print "Could not verify Presence."; Done = True
 	End Method
+
+	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
+		Print "Presence changed: " + presenceUserId.ToString()
+	End Method
 End Type
 
 Function ConfigValue:String(config:String, name:String)
@@ -92,7 +98,7 @@ Local config:String = LoadText(configPath)
 
 Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 initializeOptions.ProductName = "EOS Presence example"
-initializeOptions.ProductVersion = "0.11.0"
+initializeOptions.ProductVersion = "0.14.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then RuntimeError "EOS initialization failed: " + EOSResultString(result)
 
@@ -137,6 +143,7 @@ While Not flow.Done And MilliSecs() - started < timeout
 Wend
 If Not flow.Done Then Print "Presence query timed out."
 
+If flow.ChangedSubscription Then flow.ChangedSubscription.Remove()
 platform.Release()
 result = EOSShutdown()
 If result <> EEOSResult.Success Then RuntimeError "EOS shutdown failed: " + EOSResultString(result)

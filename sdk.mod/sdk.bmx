@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.12.0"
+ModuleInfo "Version: 0.15.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -39,6 +39,12 @@ ModuleInfo "History: 0.11.0"
 ModuleInfo "History: Added Presence queries and cached presence copies."
 ModuleInfo "History: 0.12.0"
 ModuleInfo "History: Added Presence status, rich-text, and join-info publishing."
+ModuleInfo "History: 0.13.0"
+ModuleInfo "History: Added friend-status and blocklist-update notifications."
+ModuleInfo "History: 0.14.0"
+ModuleInfo "History: Added presence-change notifications."
+ModuleInfo "History: 0.15.0"
+ModuleInfo "History: Added Auth and Connect login-lifecycle notifications."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -302,6 +308,12 @@ Enum EEOSPresenceStatus
 	Away = 2
 	ExtendedAway = 3
 	DoNotDisturb = 4
+End Enum
+
+Enum EEOSLoginStatus
+	NotLoggedIn = 0
+	UsingLocalProfile = 1
+	LoggedIn = 2
 End Enum
 
 Enum EEOSLeaderboardAggregation
@@ -624,6 +636,10 @@ Interface IEOSAuthLogoutListener
 	Method OnEOSAuthLogout(result:EEOSResult, localUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSAuthLoginStatusListener
+	Method OnEOSAuthLoginStatusChanged(localUserId:TEOSEpicAccountId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
+End Interface
+
 Interface IEOSConnectLoginListener
 	Method OnEOSConnectLogin(result:EEOSResult, localUserId:TEOSProductUserId, continuanceToken:TEOSConnectContinuanceToken)
 End Interface
@@ -634,6 +650,14 @@ End Interface
 
 Interface IEOSConnectLogoutListener
 	Method OnEOSConnectLogout(result:EEOSResult, localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSConnectAuthExpirationListener
+	Method OnEOSConnectAuthExpiration(localUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSConnectLoginStatusListener
+	Method OnEOSConnectLoginStatusChanged(localUserId:TEOSProductUserId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
 End Interface
 
 Interface IEOSStatsIngestListener
@@ -688,12 +712,24 @@ Interface IEOSFriendsQueryListener
 	Method OnEOSFriendsQuery(result:EEOSResult, localUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSFriendsUpdateListener
+	Method OnEOSFriendsUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, previousStatus:EEOSFriendsStatus, currentStatus:EEOSFriendsStatus)
+End Interface
+
+Interface IEOSBlockedUsersUpdateListener
+	Method OnEOSBlockedUsersUpdate(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, blocked:Int)
+End Interface
+
 Interface IEOSPresenceQueryListener
 	Method OnEOSPresenceQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
 End Interface
 
 Interface IEOSPresenceSetListener
 	Method OnEOSPresenceSet(result:EEOSResult, localUserId:TEOSEpicAccountId, richPresenceResult:EEOSResult)
+End Interface
+
+Interface IEOSPresenceChangedListener
+	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
 End Interface
 
 Interface IEOSLogListener
@@ -1204,6 +1240,114 @@ Type TEOSConnectLogoutRequest
 	End Method
 End Type
 
+Type TEOSAuthLoginStatusSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAuthLoginStatusListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSAuthLoginStatusSubscription(owner:TEOSPlatform, listener:IEOSAuthLoginStatusListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSAuthLoginStatusSubscription = New TEOSAuthLoginStatusSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSAuthLoginStatusSubscription, localUserHandle:Byte Ptr, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSAuthLoginStatusChanged(TEOSEpicAccountId._Create(localUserHandle), previousStatus, currentStatus)
+	End Function
+	Function _Cancel(subscription:TEOSAuthLoginStatusSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id; _id = 0; _listener = Null
+		bmx_eos_login_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSConnectAuthExpirationSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSConnectAuthExpirationListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSConnectAuthExpirationSubscription(owner:TEOSPlatform, listener:IEOSConnectAuthExpirationListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSConnectAuthExpirationSubscription = New TEOSConnectAuthExpirationSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSConnectAuthExpirationSubscription, localUserHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSConnectAuthExpiration(TEOSProductUserId._Create(localUserHandle))
+	End Function
+	Function _Cancel(subscription:TEOSConnectAuthExpirationSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id; _id = 0; _listener = Null
+		bmx_eos_login_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSConnectLoginStatusSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSConnectLoginStatusListener
+	Field _id:ULong
+	Public
+	Function _Create:TEOSConnectLoginStatusSubscription(owner:TEOSPlatform, listener:IEOSConnectLoginStatusListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSConnectLoginStatusSubscription = New TEOSConnectLoginStatusSubscription
+		subscription._owner = owner; subscription._listener = listener
+		Return subscription
+	End Function
+	Function _Notify(subscription:TEOSConnectLoginStatusSubscription, localUserHandle:Byte Ptr, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSConnectLoginStatusChanged(TEOSProductUserId._Create(localUserHandle), previousStatus, currentStatus)
+	End Function
+	Function _Cancel(subscription:TEOSConnectLoginStatusSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id; _id = 0; _listener = Null
+		bmx_eos_login_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Type TEOSStatsIngestRequest
 	Private
 	Field _owner:TEOSPlatform
@@ -1619,6 +1763,98 @@ Type TEOSFriendsQueryRequest
 	End Method
 End Type
 
+Type TEOSFriendsUpdateSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSFriendsUpdateListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSFriendsUpdateSubscription(owner:TEOSPlatform, listener:IEOSFriendsUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSFriendsUpdateSubscription = New TEOSFriendsUpdateSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSFriendsUpdateSubscription, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, previousStatus:EEOSFriendsStatus, currentStatus:EEOSFriendsStatus) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSFriendsUpdate(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), previousStatus, currentStatus)
+	End Function
+
+	Function _Cancel(subscription:TEOSFriendsUpdateSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_friends_remove_notify(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSBlockedUsersUpdateSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSBlockedUsersUpdateListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSBlockedUsersUpdateSubscription(owner:TEOSPlatform, listener:IEOSBlockedUsersUpdateListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSBlockedUsersUpdateSubscription = New TEOSBlockedUsersUpdateSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSBlockedUsersUpdateSubscription, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, blocked:Int) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSBlockedUsersUpdate(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), blocked)
+	End Function
+
+	Function _Cancel(subscription:TEOSBlockedUsersUpdateSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_friends_remove_notify(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Type TEOSPresenceQueryRequest
 	Private
 	Field _owner:TEOSPlatform
@@ -1681,6 +1917,52 @@ Type TEOSPresenceSetRequest
 	End Method
 End Type
 
+Type TEOSPresenceChangedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSPresenceChangedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSPresenceChangedSubscription(owner:TEOSPlatform, listener:IEOSPresenceChangedListener)
+		If Not owner Or Not listener Then Return Null
+		Local subscription:TEOSPresenceChangedSubscription = New TEOSPresenceChangedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSPresenceChangedSubscription, localUserHandle:Byte Ptr, presenceUserHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then subscription._listener.OnEOSPresenceChanged(TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(presenceUserHandle))
+	End Function
+
+	Function _Cancel(subscription:TEOSPresenceChangedSubscription) { nomangle }
+		If Not subscription Then Return
+		subscription._id = 0
+		subscription._listener = Null
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If Not _id Then Return
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_presence_remove_notify_changed(id)
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1728,6 +2010,19 @@ Type TEOSAuth
 	Method LoggedInAccountByIndex:TEOSEpicAccountId(index:Int)
 		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return Null
 		Return TEOSEpicAccountId._Create(bmx_eos_auth_get_logged_in_account_by_index(_handle, index))
+	End Method
+
+	Method LoginStatus:EEOSLoginStatus(localUserId:TEOSEpicAccountId)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Then Return EEOSLoginStatus.NotLoggedIn
+		Return EEOSLoginStatus(bmx_eos_auth_get_login_status(_handle, localUserId._NativeHandle()))
+	End Method
+
+	Method AddNotifyLoginStatusChanged:TEOSAuthLoginStatusSubscription(listener:IEOSAuthLoginStatusListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSAuthLoginStatusSubscription = TEOSAuthLoginStatusSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_auth_add_notify_login_status(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
 	End Method
 
 	Rem
@@ -1841,6 +2136,27 @@ Type TEOSConnect
 	Method LoggedInUserByIndex:TEOSProductUserId(index:Int)
 		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return Null
 		Return TEOSProductUserId._Create(bmx_eos_connect_get_logged_in_user_by_index(_handle, index))
+	End Method
+
+	Method LoginStatus:EEOSLoginStatus(localUserId:TEOSProductUserId)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Then Return EEOSLoginStatus.NotLoggedIn
+		Return EEOSLoginStatus(bmx_eos_connect_get_login_status(_handle, localUserId._NativeHandle()))
+	End Method
+
+	Method AddNotifyAuthExpiration:TEOSConnectAuthExpirationSubscription(listener:IEOSConnectAuthExpirationListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSConnectAuthExpirationSubscription = TEOSConnectAuthExpirationSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_connect_add_notify_auth_expiration(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyLoginStatusChanged:TEOSConnectLoginStatusSubscription(listener:IEOSConnectLoginStatusListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSConnectLoginStatusSubscription = TEOSConnectLoginStatusSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_connect_add_notify_login_status(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
 	End Method
 End Type
 
@@ -2392,6 +2708,22 @@ Type TEOSFriends
 		Return TEOSEpicAccountId._Create(bmx_eos_friends_get_blocked_by_index(_handle, localUserId._NativeHandle(), index))
 	End Method
 
+	Method AddNotifyFriendsUpdate:TEOSFriendsUpdateSubscription(listener:IEOSFriendsUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSFriendsUpdateSubscription = TEOSFriendsUpdateSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_friends_add_notify_update(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
+	Method AddNotifyBlockedUsersUpdate:TEOSBlockedUsersUpdateSubscription(listener:IEOSBlockedUsersUpdateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSBlockedUsersUpdateSubscription = TEOSBlockedUsersUpdateSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_friends_add_notify_blocked(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
+	End Method
+
 	Private
 	Method _ValidUser:Int(localUserId:TEOSEpicAccountId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
@@ -2479,6 +2811,14 @@ Type TEOSPresence
 		Local request:TEOSPresenceSetRequest = TEOSPresenceSetRequest._Create(_owner, listener)
 		bmx_eos_presence_set(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), modification._NativeHandle())
 		Return request
+	End Method
+
+	Method AddNotifyPresenceChanged:TEOSPresenceChangedSubscription(listener:IEOSPresenceChangedListener)
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then Return Null
+		Local subscription:TEOSPresenceChangedSubscription = TEOSPresenceChangedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_presence_add_notify_changed(_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then Return Null
+		Return subscription
 	End Method
 
 	Private
@@ -2569,6 +2909,8 @@ Extern
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
 	Function bmx_eos_auth_get_logged_in_accounts_count:Int(authHandle:Byte Ptr)
 	Function bmx_eos_auth_get_logged_in_account_by_index:Byte Ptr(authHandle:Byte Ptr, index:Int)
+	Function bmx_eos_auth_get_login_status:Int(authHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_auth_add_notify_login_status:ULong(platformHandle:Byte Ptr, authHandle:Byte Ptr, subscription:TEOSAuthLoginStatusSubscription)
 	Function bmx_eos_auth_copy_user_auth_token:EEOSResult(authHandle:Byte Ptr, localUserHandle:Byte Ptr, app:String Var, clientId:String Var, accountHandle:Byte Ptr Var, accessToken:String Var, expiresIn:Double Var, expiresAt:String Var, authType:EEOSAuthTokenType Var, refreshToken:String Var, refreshExpiresIn:Double Var, refreshExpiresAt:String Var)
 	Function bmx_eos_auth_copy_id_token:EEOSResult(authHandle:Byte Ptr, accountHandle:Byte Ptr, tokenAccountHandle:Byte Ptr Var, jsonWebToken:String Var)
 
@@ -2577,6 +2919,10 @@ Extern
 	Function bmx_eos_connect_logout(platformHandle:Byte Ptr, connectHandle:Byte Ptr, request:TEOSConnectLogoutRequest, localUserHandle:Byte Ptr)
 	Function bmx_eos_connect_get_logged_in_users_count:Int(connectHandle:Byte Ptr)
 	Function bmx_eos_connect_get_logged_in_user_by_index:Byte Ptr(connectHandle:Byte Ptr, index:Int)
+	Function bmx_eos_connect_get_login_status:Int(connectHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_connect_add_notify_auth_expiration:ULong(platformHandle:Byte Ptr, connectHandle:Byte Ptr, subscription:TEOSConnectAuthExpirationSubscription)
+	Function bmx_eos_connect_add_notify_login_status:ULong(platformHandle:Byte Ptr, connectHandle:Byte Ptr, subscription:TEOSConnectLoginStatusSubscription)
+	Function bmx_eos_login_remove_notify(id:ULong)
 
 	Function bmx_eos_stats_ingest(platformHandle:Byte Ptr, statsHandle:Byte Ptr, request:TEOSStatsIngestRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, names:String[], amounts:Int[])
 	Function bmx_eos_stats_query(platformHandle:Byte Ptr, statsHandle:Byte Ptr, request:TEOSStatsQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, startTime:Long, endTime:Long, names:String[])
@@ -2624,6 +2970,9 @@ Extern
 	Function bmx_eos_friends_get_status:EEOSFriendsStatus(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_count:Int(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr)
 	Function bmx_eos_friends_get_blocked_by_index:Byte Ptr(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:Int)
+	Function bmx_eos_friends_add_notify_update:ULong(platformHandle:Byte Ptr, friendsHandle:Byte Ptr, subscription:TEOSFriendsUpdateSubscription)
+	Function bmx_eos_friends_add_notify_blocked:ULong(platformHandle:Byte Ptr, friendsHandle:Byte Ptr, subscription:TEOSBlockedUsersUpdateSubscription)
+	Function bmx_eos_friends_remove_notify(id:ULong)
 
 	Function bmx_eos_presence_query(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_presence_has:Int(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
@@ -2634,6 +2983,8 @@ Extern
 	Function bmx_eos_presence_modification_set_rich_text:EEOSResult(modificationHandle:Byte Ptr, richText:String)
 	Function bmx_eos_presence_modification_set_join_info:EEOSResult(modificationHandle:Byte Ptr, joinInfo:String)
 	Function bmx_eos_presence_set(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceSetRequest, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr)
+	Function bmx_eos_presence_add_notify_changed:ULong(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, subscription:TEOSPresenceChangedSubscription)
+	Function bmx_eos_presence_remove_notify_changed(id:ULong)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

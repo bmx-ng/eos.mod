@@ -10,14 +10,14 @@ The current foundation covers:
 - platform creation, release, and explicit main-thread ticking
 - SDK logging and result helpers
 - Epic Account ID and Product User ID wrappers
-- Auth login/logout, account enumeration, and auth-token copying
-- Connect login/logout, Product User enumeration, and explicit user creation
+- Auth login/logout, account enumeration, auth-token copying, and status notifications
+- Connect login/logout, Product User enumeration, explicit user creation, status notifications, and expiry warnings
 - Stats ingest and query, with copied access to cached stat results
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
 - Leaderboard definition, ranked-record, and multi-user score queries
 - User Info account, display-name, and external-account queries with copied cache access
-- Friends list, blocklist, and relationship-status queries
-- Presence queries and publishing, with copied status, rich text, product details, and data records
+- Friends list, blocklist, relationship-status queries, and change notifications
+- Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -92,12 +92,14 @@ display name or by a linked external account.
 
 The [`friends.bmx`](sdk.mod/examples/friends.bmx) example requests the Friends
 List Auth scope, queries the signed-in account's friends and blocklist, and
-prints each cached relationship status.
+prints each cached relationship status. It also registers removable friend and
+blocklist update subscriptions for the lifetime of the example.
 
 The [`presence.bmx`](sdk.mod/examples/presence.bmx) example requests the
 Presence Auth scope, queries the signed-in account, and copies its cached status,
 rich text, product information, and custom data records. Its explicit `write`
 mode publishes an online status and test rich-text value, then queries it back.
+The example also registers a removable presence-change subscription.
 
 ## Status and roadmap
 

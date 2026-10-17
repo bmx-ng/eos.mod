@@ -54,6 +54,8 @@ for explicit confirmation before **C** creates one.
 
 After Auth succeeds, the app queries the signed-in account's User Info profile,
 friends, blocklist, and presence.
+It also verifies that Auth and Connect login-status notifications are delivered
+during the normal login sequence.
 After Connect succeeds, it performs read-only Stats, Achievements, and
 Leaderboards queries and reports the number of configured definitions and
 cached player values. It never ingests a stat or unlocks an achievement.
@@ -69,6 +71,14 @@ open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer
 
 This mode changes persistent test-user data and may permanently unlock the
 achievement. It is never selected from the normal interactive login screen.
+
+To test Presence publishing and its change notification without changing
+Stats or Achievements, use the isolated `presence-write` mode. It publishes an
+online status and temporary test rich text, then queries the value back:
+
+```sh
+open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer presence-write
+```
 
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
