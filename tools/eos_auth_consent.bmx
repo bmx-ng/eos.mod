@@ -23,9 +23,11 @@ Global succeeded:Int
 Global latestLog:String
 Global pendingProductUser:Int
 Global writeMode:Int
+Global presenceWriteMode:Int
 Global displayedFriendCount:Int
 Global displayedBlockedUserCount:Int
 Global displayedPresenceStatus:EEOSPresenceStatus
+Global displayedPresenceWrite:String
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -33,12 +35,13 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener, IEOSUserInfoQueryListener, IEOSFriendsQueryListener, IEOSPresenceQueryListener, IEOSPresenceSetListener, IEOSPresenceChangedListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field UserInfo:TEOSUserInfoInterface
 	Field Friends:TEOSFriends
 	Field Presence:TEOSPresence
+	Field PresenceChangedSubscription:TEOSPresenceChangedSubscription
 	Field Stats:TEOSStats
 	Field Achievements:TEOSAchievements
 	Field Leaderboards:TEOSLeaderboards
@@ -68,6 +71,9 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field StatObserved:Int
 	Field UnlockObserved:Int
 	Field UnlockedSubscription:TEOSAchievementsUnlockedSubscription
+	Field PresenceWriteTest:Int
+	Field PresenceWriteStage:Int
+	Field PresenceChangeObserved:Int
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -86,6 +92,7 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 			statusDetail = "Checking the permitted Basic Profile fields..."
 			EpicAccountId = selectedAccountId
 			If Not EpicAccountId Then EpicAccountId = localUserId
+			PresenceChangedSubscription = Presence.AddNotifyPresenceChanged(Self)
 			If Not UserInfo.Query(EpicAccountId, EpicAccountId, Self) Then Fail("Could not start User Info query", EEOSResult.InvalidState)
 		Else
 			Fail("Epic account sign-in did not complete", result)
@@ -123,9 +130,39 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		result = Presence.CopyPresence(localUserId, targetUserId, info)
 		If result <> EEOSResult.Success Then Fail("Could not copy Presence", result); Return
 		displayedPresenceStatus = info.Status
+		If PresenceWriteTest And PresenceWriteStage = 0 Then
+			Local modification:TEOSPresenceModification
+			result = Presence.CreateModification(localUserId, modification)
+			If result <> EEOSResult.Success Then Fail("Could not create Presence modification", result); Return
+			result = modification.SetStatus(EEOSPresenceStatus.Online)
+			If result = EEOSResult.Success Then result = modification.SetRawRichText("Testing EOS from BlitzMax")
+			If result <> EEOSResult.Success Then modification.Release(); Fail("Could not prepare Presence update", result); Return
+			PresenceWriteStage = 1
+			statusTitle = "Publishing Epic presence..."
+			statusDetail = "Setting Online with BlitzMax test rich text."
+			If Not Presence.SetPresence(localUserId, modification, Self) Then modification.Release(); Fail("Could not publish Presence", EEOSResult.InvalidState); Return
+			modification.Release()
+			Return
+		End If
+		If PresenceWriteStage = 2 Then
+			displayedPresenceWrite = "Published"
+			If PresenceChangeObserved Then displayedPresenceWrite :+ " + notified"
+		End If
 		statusTitle = "Epic presence retrieved"
 		statusDetail = "Status " + PresenceStatusName(info.Status) + " | Continuing to EOS Connect..."
 		BeginConnect()
+	End Method
+
+	Method OnEOSPresenceSet(result:EEOSResult, localUserId:TEOSEpicAccountId, richPresenceResult:EEOSResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Presence publishing failed", result); Return
+		If richPresenceResult <> EEOSResult.Success Then Fail("Rich Presence publishing failed", richPresenceResult); Return
+		PresenceWriteStage = 2
+		If Not Presence.Query(localUserId, localUserId, Self) Then Fail("Could not verify Presence update", EEOSResult.InvalidState)
+	End Method
+
+	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
+		If EpicAccountId And presenceUserId And presenceUserId.ToString() = EpicAccountId.ToString() Then PresenceChangeObserved = True
 	End Method
 
 	Method BeginConnect()
@@ -486,7 +523,11 @@ Function DrawScreen()
 			Else
 				DrawText "Profile and all read-only EOS service queries succeeded.", 70, 205
 				DrawText "Friends: " + displayedFriendCount + "  |  Blocked: " + displayedBlockedUserCount + "  |  Presence: " + PresenceStatusName(displayedPresenceStatus), 70, 242
-				DrawText "Zero values are valid when this test account has no data.", 70, 279
+				If presenceWriteMode Then
+					DrawText "Presence update: " + displayedPresenceWrite, 70, 279
+				Else
+					DrawText "Zero values are valid when this test account has no data.", 70, 279
+				End If
 			End If
 		Else If done Then
 			DrawText "The test stopped at the service named above.", 70, 205
@@ -530,6 +571,7 @@ Local configPath:String = FindConfig()
 Local loginMode:String
 If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
 If AppArgs.Length > 3 And AppArgs[3].ToLower() = "write" Then writeMode = True
+If AppArgs.Length > 3 And AppArgs[3].ToLower() = "presence-write" Then presenceWriteMode = True
 If Not configPath Then
 	statusKind = 3
 	statusTitle = "eos.local.conf was not found"
@@ -539,7 +581,7 @@ Else
 	Local config:String = LoadText(configPath)
 	Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 	initializeOptions.ProductName = "EOS Integration Test"
-	initializeOptions.ProductVersion = "0.11.0"
+	initializeOptions.ProductVersion = "0.14.0"
 	Local result:EEOSResult = EOSInitialize(initializeOptions)
 	If result <> EEOSResult.Success Then
 		statusKind = 3
@@ -583,6 +625,7 @@ Else
 			listener.Achievements = achievements
 			listener.Leaderboards = leaderboards
 			listener.WriteTest = writeMode
+			listener.PresenceWriteTest = presenceWriteMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
 			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Or Not userInfo Or Not friends Or Not presence Then
 				statusKind = 3
@@ -613,6 +656,7 @@ Else
 			Wend
 			completedMainLoop = True
 			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
+			If listener.PresenceChangedSubscription Then listener.PresenceChangedSubscription.Remove()
 			platform.Release()
 		End If
 

@@ -70,6 +70,14 @@ open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer
 This mode changes persistent test-user data and may permanently unlock the
 achievement. It is never selected from the normal interactive login screen.
 
+To test Presence publishing and its change notification without changing
+Stats or Achievements, use the isolated `presence-write` mode. It publishes an
+online status and temporary test rich text, then queries the value back:
+
+```sh
+open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer presence-write
+```
+
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
 event loop; a Max2D window is sufficient and MaxGUI is not required.
