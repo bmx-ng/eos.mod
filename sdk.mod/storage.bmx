@@ -117,8 +117,13 @@ Type TEOSStorageRequest
 		End If
 	End Function
 
-	Method IsComplete:Int() Return _complete End Method
-	Method Operation:EEOSStorageOperation() Return _operation End Method
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+
+	Method Operation:EEOSStorageOperation()
+		Return _operation
+	End Method
 End Type
 
 Rem
@@ -299,8 +304,13 @@ Type TEOSTitleStorage
 		If user Then Return user._NativeHandle()
 		Return Null
 	End Method
-	Method FilenameValid:Int(filename:String) Return filename.Length > 0 And filename.Length <= EOS_TITLESTORAGE_FILENAME_MAX_LENGTH_BYTES End Method
-	Method ValidOptional:Int(user:TEOSProductUserId) Return _owner And _owner.IsValid() And _handle And (Not user Or user.IsValid()) End Method
+	Method FilenameValid:Int(filename:String)
+		Return filename.Length > 0 And filename.Length <= EOS_TITLESTORAGE_FILENAME_MAX_LENGTH_BYTES
+	End Method
+
+	Method ValidOptional:Int(user:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And _handle And (Not user Or user.IsValid())
+	End Method
 End Type
 
 Rem
@@ -378,9 +388,17 @@ Type TEOSPlayerDataStorage
 		Return request
 	End Method
 	Private
-	Method FilenameValid:Int(filename:String) Return filename.Length > 0 And filename.Length <= EOS_PLAYERDATASTORAGE_FILENAME_MAX_LENGTH_BYTES End Method
-	Method ValidUser:Int(user:TEOSProductUserId) Return _owner And _owner.IsValid() And _handle And user And user.IsValid() End Method
-	Method Valid:Int(user:TEOSProductUserId, filename:String) Return ValidUser(user) And FilenameValid(filename) End Method
+	Method FilenameValid:Int(filename:String)
+		Return filename.Length > 0 And filename.Length <= EOS_PLAYERDATASTORAGE_FILENAME_MAX_LENGTH_BYTES
+	End Method
+
+	Method ValidUser:Int(user:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And _handle And user And user.IsValid()
+	End Method
+
+	Method Valid:Int(user:TEOSProductUserId, filename:String)
+		Return ValidUser(user) And FilenameValid(filename)
+	End Method
 End Type
 
 Private
