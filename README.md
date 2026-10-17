@@ -18,7 +18,7 @@ The current foundation covers:
 - User Info account, display-name, and external-account queries with copied cache access
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
-- Lobby creation, destruction, leaving, and copied lobby/member snapshots
+- Lobby creation, search, joining, leaving, destruction, and copied lobby/member snapshots
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -105,6 +105,8 @@ The example also registers a removable presence-change subscription.
 The [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) example signs in through Auth
 and Connect, creates a temporary invite-only lobby, copies its details and
 member count, then destroys it. The client policy must permit Lobby actions.
+Lobby searches can target a lobby ID, Product User, or string parameters such
+as the built-in `bucket` key; copied search-result details are passed to Join().
 
 ## Status and roadmap
 

@@ -83,6 +83,10 @@ void eos_sdk_TEOSLobbyDestroyRequest__Complete(BBObject *, EOS_EResult, BBString
 void eos_sdk_TEOSLobbyDestroyRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLobbyLeaveRequest__Complete(BBObject *, EOS_EResult, BBString *);
 void eos_sdk_TEOSLobbyLeaveRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyJoinRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyJoinRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbySearchFindRequest__Complete(BBObject *, EOS_EResult);
+void eos_sdk_TEOSLobbySearchFindRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -120,7 +124,9 @@ enum class RequestKind {
 	PresenceSet,
 	LobbyCreate,
 	LobbyDestroy,
-	LobbyLeave
+	LobbyLeave,
+	LobbyJoin,
+	LobbySearchFind
 };
 
 struct RequestContext {
@@ -228,6 +234,12 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LobbyLeave:
 			eos_sdk_TEOSLobbyLeaveRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyJoin:
+			eos_sdk_TEOSLobbyJoinRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbySearchFind:
+			eos_sdk_TEOSLobbySearchFindRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -780,6 +792,25 @@ void EOS_CALL LobbyLeaveCallback(const EOS_Lobby_LeaveLobbyCallbackInfo *data) {
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSLobbyLeaveRequest__Complete(context->request, data->ResultCode,
 		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyJoinCallback(const EOS_Lobby_JoinLobbyCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyJoinRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbySearchFindCallback(const EOS_LobbySearch_FindCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbySearchFindRequest__Complete(context->request, data->ResultCode);
 	if (terminal) delete context;
 }
 
@@ -1931,6 +1962,96 @@ void bmx_eos_lobby_leave(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *req
 	options.LobbyId = lobbyId.required();
 	auto *context = CreateRequest(platform, request, RequestKind::LobbyLeave);
 	EOS_Lobby_LeaveLobby(lobby, &options, context, LobbyLeaveCallback);
+}
+
+void bmx_eos_lobby_join(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_HLobbyDetails details, EOS_ProductUserId localUserId, int presenceEnabled,
+	int crossplayOptOut) {
+	EOS_Lobby_JoinLobbyOptions options{};
+	options.ApiVersion = EOS_LOBBY_JOINLOBBY_API_LATEST;
+	options.LobbyDetailsHandle = details;
+	options.LocalUserId = localUserId;
+	options.bPresenceEnabled = presenceEnabled ? EOS_TRUE : EOS_FALSE;
+	options.LocalRTCOptions = nullptr;
+	options.bCrossplayOptOut = crossplayOptOut ? EOS_TRUE : EOS_FALSE;
+	options.RTCRoomJoinActionType = EOS_ELobbyRTCRoomJoinActionType::EOS_LRRJAT_AutomaticJoin;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyJoin);
+	EOS_Lobby_JoinLobby(lobby, &options, context, LobbyJoinCallback);
+}
+
+EOS_EResult bmx_eos_lobby_create_search(EOS_HLobby lobby, unsigned int maxResults,
+	EOS_HLobbySearch *searchHandle) {
+	EOS_Lobby_CreateLobbySearchOptions options{};
+	options.ApiVersion = EOS_LOBBY_CREATELOBBYSEARCH_API_LATEST;
+	options.MaxResults = maxResults;
+	return EOS_Lobby_CreateLobbySearch(lobby, &options, searchHandle);
+}
+
+void bmx_eos_lobby_search_release(EOS_HLobbySearch search) {
+	if (search) EOS_LobbySearch_Release(search);
+}
+
+EOS_EResult bmx_eos_lobby_search_set_lobby_id(EOS_HLobbySearch search, BBString *maxLobbyId) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_LobbySearch_SetLobbyIdOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_SETLOBBYID_API_LATEST;
+	options.LobbyId = lobbyId.required();
+	return EOS_LobbySearch_SetLobbyId(search, &options);
+}
+
+EOS_EResult bmx_eos_lobby_search_set_target_user(EOS_HLobbySearch search,
+	EOS_ProductUserId targetUserId) {
+	EOS_LobbySearch_SetTargetUserIdOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_SETTARGETUSERID_API_LATEST;
+	options.TargetUserId = targetUserId;
+	return EOS_LobbySearch_SetTargetUserId(search, &options);
+}
+
+EOS_EResult bmx_eos_lobby_search_set_string_parameter(EOS_HLobbySearch search,
+	BBString *maxKey, BBString *maxValue, EOS_EComparisonOp comparison) {
+	UTF8String key(maxKey);
+	UTF8String value(maxValue);
+	EOS_Lobby_AttributeData attribute{};
+	attribute.ApiVersion = EOS_LOBBY_ATTRIBUTEDATA_API_LATEST;
+	attribute.Key = key.required();
+	attribute.Value.AsUtf8 = value.required();
+	attribute.ValueType = EOS_EAttributeType::EOS_AT_STRING;
+	EOS_LobbySearch_SetParameterOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_SETPARAMETER_API_LATEST;
+	options.Parameter = &attribute;
+	options.ComparisonOp = comparison;
+	return EOS_LobbySearch_SetParameter(search, &options);
+}
+
+EOS_EResult bmx_eos_lobby_search_set_max_results(EOS_HLobbySearch search,
+	unsigned int maxResults) {
+	EOS_LobbySearch_SetMaxResultsOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_SETMAXRESULTS_API_LATEST;
+	options.MaxResults = maxResults;
+	return EOS_LobbySearch_SetMaxResults(search, &options);
+}
+
+void bmx_eos_lobby_search_find(EOS_HPlatform platform, EOS_HLobbySearch search,
+	BBObject *request, EOS_ProductUserId localUserId) {
+	EOS_LobbySearch_FindOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_FIND_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbySearchFind);
+	EOS_LobbySearch_Find(search, &options, context, LobbySearchFindCallback);
+}
+
+unsigned int bmx_eos_lobby_search_get_result_count(EOS_HLobbySearch search) {
+	EOS_LobbySearch_GetSearchResultCountOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_GETSEARCHRESULTCOUNT_API_LATEST;
+	return EOS_LobbySearch_GetSearchResultCount(search, &options);
+}
+
+EOS_EResult bmx_eos_lobby_search_copy_result(EOS_HLobbySearch search,
+	unsigned int index, EOS_HLobbyDetails *detailsHandle) {
+	EOS_LobbySearch_CopySearchResultByIndexOptions options{};
+	options.ApiVersion = EOS_LOBBYSEARCH_COPYSEARCHRESULTBYINDEX_API_LATEST;
+	options.LobbyIndex = index;
+	return EOS_LobbySearch_CopySearchResultByIndex(search, &options, detailsHandle);
 }
 
 EOS_EResult bmx_eos_lobby_copy_details(EOS_HLobby lobby, EOS_ProductUserId localUserId,

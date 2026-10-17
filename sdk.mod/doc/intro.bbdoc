@@ -55,6 +55,9 @@ Platform.Lobby() creates, destroys, and leaves lobbies. CopyDetails() returns an
 owned lobby snapshot handle whose general information and current member IDs
 can be copied or enumerated. Release details handles before releasing the
 platform.
+CreateSearch() returns an owned search object that can find a lobby by ID,
+member, or string parameter. A copied result details handle can be passed to
+Lobby.Join().
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

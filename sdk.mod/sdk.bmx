@@ -331,6 +331,23 @@ Enum EEOSLobbyPermissionLevel
 	InviteOnly = 2
 End Enum
 
+Enum EEOSComparisonOp
+	Equal = 0
+	NotEqual = 1
+	GreaterThan = 2
+	GreaterThanOrEqual = 3
+	LessThan = 4
+	LessThanOrEqual = 5
+	Distance = 6
+	AnyOf = 7
+	NotAnyOf = 8
+	OneOf = 9
+	NotOneOf = 10
+	Contains = 11
+	RegexMatch = 12
+	Size = 13
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -404,6 +421,13 @@ Type TEOSLobbyCreateOptions
 	Field EnableRTCRoom:Int
 	Field EnableJoinById:Int
 	Field RejoinAfterKickRequiresInvite:Int
+	Field CrossplayOptOut:Int
+End Type
+
+Type TEOSLobbyJoinOptions
+	Field LocalUserId:TEOSProductUserId
+	Field Details:TEOSLobbyDetails
+	Field PresenceEnabled:Int
 	Field CrossplayOptOut:Int
 End Type
 
@@ -787,6 +811,14 @@ End Interface
 
 Interface IEOSLobbyLeaveListener
 	Method OnEOSLobbyLeave(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyJoinListener
+	Method OnEOSLobbyJoin(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbySearchFindListener
+	Method OnEOSLobbySearchFind(result:EEOSResult)
 End Interface
 
 Interface IEOSLogListener
@@ -2075,6 +2107,72 @@ Type TEOSLobbyLeaveRequest
 	End Method
 End Type
 
+Type TEOSLobbyJoinRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _details:TEOSLobbyDetails
+	Field _listener:IEOSLobbyJoinListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyJoinRequest(owner:TEOSPlatform, details:TEOSLobbyDetails, listener:IEOSLobbyJoinListener)
+		If Not owner Or Not details Or Not listener Then Return Null
+		Local request:TEOSLobbyJoinRequest = New TEOSLobbyJoinRequest
+		request._owner = owner
+		request._details = details
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyJoinRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyJoinListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._details = Null
+		If listener Then listener.OnEOSLobbyJoin(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyJoinRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbySearchFindRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _search:TEOSLobbySearch
+	Field _listener:IEOSLobbySearchFindListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbySearchFindRequest(owner:TEOSPlatform, search:TEOSLobbySearch, listener:IEOSLobbySearchFindListener)
+		If Not owner Or Not search Or Not listener Then Return Null
+		Local request:TEOSLobbySearchFindRequest = New TEOSLobbySearchFindRequest
+		request._owner = owner
+		request._search = search
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbySearchFindRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbySearchFindListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._search = Null
+		If listener Then listener.OnEOSLobbySearchFind(result)
+	End Function
+
+	Function _Cancel(request:TEOSLobbySearchFindRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Type TEOSPresenceChangedSubscription
 	Private
 	Field _owner:TEOSPlatform
@@ -3087,6 +3185,28 @@ Type TEOSLobby
 	End Method
 
 	Rem
+	bbdoc: Joins the lobby represented by a details handle copied from a completed search.
+	End Rem
+	Method Join:TEOSLobbyJoinRequest(options:TEOSLobbyJoinOptions, listener:IEOSLobbyJoinListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.LocalUserId Or Not options.LocalUserId.IsValid() Or Not options.Details Or Not options.Details.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbyJoinRequest = TEOSLobbyJoinRequest._Create(_owner, options.Details, listener)
+		bmx_eos_lobby_join(_owner._NativeHandle(), _handle, request, options.Details._NativeHandle(), options.LocalUserId._NativeHandle(), options.PresenceEnabled, options.CrossplayOptOut)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Creates an owned lobby search with room for up to maxResults results.
+	End Rem
+	Method CreateSearch:EEOSResult(maxResults:UInt, search:TEOSLobbySearch Var)
+		search = Null
+		If Not _owner Or Not _owner.IsValid() Or maxResults < 1 Or maxResults > 200 Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_create_search(_handle, maxResults, handle)
+		If result = EEOSResult.Success Then search = TEOSLobbySearch._Create(_owner, handle)
+		Return result
+	End Method
+
+	Rem
 	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
 	End Rem
 	Method CopyDetails:EEOSResult(localUserId:TEOSProductUserId, lobbyId:String, details:TEOSLobbyDetails Var)
@@ -3101,6 +3221,85 @@ Type TEOSLobby
 	Private
 	Method _ValidUser:Int(localUserId:TEOSProductUserId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned configurable lobby search and its most recent results.
+about: Set exactly one search mode: a lobby ID, target Product User, or one or
+more parameters. Release the search before releasing its platform.
+End Rem
+Type TEOSLobbySearch
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbySearch(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local search:TEOSLobbySearch = New TEOSLobbySearch
+		search._owner = owner
+		search._handle = handle
+		Return search
+	End Function
+
+	Method SetLobbyId:EEOSResult(lobbyId:String)
+		If Not IsValid() Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_lobby_id(_handle, lobbyId)
+	End Method
+
+	Method SetTargetUserId:EEOSResult(targetUserId:TEOSProductUserId)
+		If Not IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_target_user(_handle, targetUserId._NativeHandle())
+	End Method
+
+	Rem
+	bbdoc: Adds a string-valued search parameter, such as key "bucket".
+	End Rem
+	Method SetStringParameter:EEOSResult(key:String, value:String, comparison:EEOSComparisonOp = EEOSComparisonOp.Equal)
+		If Not IsValid() Or Not key Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_string_parameter(_handle, key, value, comparison)
+	End Method
+
+	Method SetMaxResults:EEOSResult(maxResults:UInt)
+		If Not IsValid() Or maxResults < 1 Or maxResults > 200 Then Return EEOSResult.InvalidParameters
+		Return bmx_eos_lobby_search_set_max_results(_handle, maxResults)
+	End Method
+
+	Method Find:TEOSLobbySearchFindRequest(localUserId:TEOSProductUserId, listener:IEOSLobbySearchFindListener)
+		If Not IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not listener Then Return Null
+		Local request:TEOSLobbySearchFindRequest = TEOSLobbySearchFindRequest._Create(_owner, Self, listener)
+		bmx_eos_lobby_search_find(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method ResultCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_search_get_result_count(_handle)
+	End Method
+
+	Method CopyResultByIndex:EEOSResult(index:UInt, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_search_copy_result(_handle, index, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_search_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
 	End Method
 End Type
 
@@ -3290,6 +3489,16 @@ Extern
 	Function bmx_eos_lobby_create(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyCreateRequest, localUserHandle:Byte Ptr, maxMembers:UInt, permissionLevel:EEOSLobbyPermissionLevel, presenceEnabled:Int, allowInvites:Int, bucketId:String, disableHostMigration:Int, enableRTCRoom:Int, enableJoinById:Int, rejoinAfterKickRequiresInvite:Int, crossplayOptOut:Int)
 	Function bmx_eos_lobby_destroy(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyDestroyRequest, localUserHandle:Byte Ptr, lobbyId:String)
 	Function bmx_eos_lobby_leave(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyLeaveRequest, localUserHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_join(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyJoinRequest, detailsHandle:Byte Ptr, localUserHandle:Byte Ptr, presenceEnabled:Int, crossplayOptOut:Int)
+	Function bmx_eos_lobby_create_search:EEOSResult(lobbyHandle:Byte Ptr, maxResults:UInt, searchHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_search_release(searchHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_set_lobby_id:EEOSResult(searchHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_search_set_target_user:EEOSResult(searchHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_set_string_parameter:EEOSResult(searchHandle:Byte Ptr, key:String, value:String, comparison:EEOSComparisonOp)
+	Function bmx_eos_lobby_search_set_max_results:EEOSResult(searchHandle:Byte Ptr, maxResults:UInt)
+	Function bmx_eos_lobby_search_find(platformHandle:Byte Ptr, searchHandle:Byte Ptr, request:TEOSLobbySearchFindRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_get_result_count:UInt(searchHandle:Byte Ptr)
+	Function bmx_eos_lobby_search_copy_result:EEOSResult(searchHandle:Byte Ptr, index:UInt, detailsHandle:Byte Ptr Var)
 	Function bmx_eos_lobby_copy_details:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, lobbyId:String, detailsHandle:Byte Ptr Var)
 	Function bmx_eos_lobby_details_release(detailsHandle:Byte Ptr)
 	Function bmx_eos_lobby_details_copy_info:EEOSResult(detailsHandle:Byte Ptr, lobbyId:String Var, ownerUserHandle:Byte Ptr Var, permissionLevel:EEOSLobbyPermissionLevel Var, availableSlots:UInt Var, maxMembers:UInt Var, allowInvites:Int Var, bucketId:String Var, allowHostMigration:Int Var, rtcRoomEnabled:Int Var, allowJoinById:Int Var, rejoinAfterKickRequiresInvite:Int Var, presenceEnabled:Int Var, allowedPlatformIds:Int[] Var)
