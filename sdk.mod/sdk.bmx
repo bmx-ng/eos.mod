@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.15.0"
+ModuleInfo "Version: 0.16.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -45,6 +45,8 @@ ModuleInfo "History: 0.14.0"
 ModuleInfo "History: Added presence-change notifications."
 ModuleInfo "History: 0.15.0"
 ModuleInfo "History: Added Auth and Connect login-lifecycle notifications."
+ModuleInfo "History: 0.16.0"
+ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snapshots."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -323,6 +325,12 @@ Enum EEOSLeaderboardAggregation
 	Latest = 3
 End Enum
 
+Enum EEOSLobbyPermissionLevel
+	PublicAdvertised = 0
+	JoinViaPresence = 1
+	InviteOnly = 2
+End Enum
+
 Rem
 bbdoc: Process-global SDK initialization values.
 End Rem
@@ -379,6 +387,43 @@ End Type
 Type TEOSConnectLoginOptions
 	Field Credentials:TEOSConnectCredentials
 	Field UserLoginInfo:TEOSConnectUserLoginInfo
+End Type
+
+Rem
+bbdoc: Values used to create a lobby.
+about: BucketId is the lobby's primary search partition and must be non-empty.
+End Rem
+Type TEOSLobbyCreateOptions
+	Field LocalUserId:TEOSProductUserId
+	Field MaxMembers:UInt = 4
+	Field PermissionLevel:EEOSLobbyPermissionLevel = EEOSLobbyPermissionLevel.InviteOnly
+	Field PresenceEnabled:Int
+	Field AllowInvites:Int = True
+	Field BucketId:String
+	Field DisableHostMigration:Int
+	Field EnableRTCRoom:Int
+	Field EnableJoinById:Int
+	Field RejoinAfterKickRequiresInvite:Int
+	Field CrossplayOptOut:Int
+End Type
+
+Rem
+bbdoc: General information copied from a lobby-details handle.
+End Rem
+Type TEOSLobbyInfo
+	Field LobbyId:String
+	Field OwnerUserId:TEOSProductUserId
+	Field PermissionLevel:EEOSLobbyPermissionLevel
+	Field AvailableSlots:UInt
+	Field MaxMembers:UInt
+	Field AllowInvites:Int
+	Field BucketId:String
+	Field AllowHostMigration:Int
+	Field RTCRoomEnabled:Int
+	Field AllowJoinById:Int
+	Field RejoinAfterKickRequiresInvite:Int
+	Field PresenceEnabled:Int
+	Field AllowedPlatformIds:Int[]
 End Type
 
 Rem
@@ -732,6 +777,18 @@ Interface IEOSPresenceChangedListener
 	Method OnEOSPresenceChanged(localUserId:TEOSEpicAccountId, presenceUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSLobbyCreateListener
+	Method OnEOSLobbyCreate(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyDestroyListener
+	Method OnEOSLobbyDestroy(result:EEOSResult, lobbyId:String)
+End Interface
+
+Interface IEOSLobbyLeaveListener
+	Method OnEOSLobbyLeave(result:EEOSResult, lobbyId:String)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -959,6 +1016,14 @@ Type TEOSPlatform
 	Method Presence:TEOSPresence()
 		If Not _handle Then Return Null
 		Return TEOSPresence._Create(Self, bmx_eos_platform_get_presence_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS game-services Lobby interface.
+	End Rem
+	Method Lobby:TEOSLobby()
+		If Not _handle Then Return Null
+		Return TEOSLobby._Create(Self, bmx_eos_platform_get_lobby_interface(_handle))
 	End Method
 
 	Rem
@@ -1910,6 +1975,99 @@ Type TEOSPresenceSetRequest
 
 	Function _Cancel(request:TEOSPresenceSetRequest) { nomangle }
 		_Complete(request, EEOSResult.Canceled, Null, EEOSResult.Canceled)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyCreateRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyCreateListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyCreateRequest(owner:TEOSPlatform, listener:IEOSLobbyCreateListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyCreateRequest = New TEOSLobbyCreateRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyCreateRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyCreateListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyCreate(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyCreateRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyDestroyRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyDestroyListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyDestroyRequest(owner:TEOSPlatform, listener:IEOSLobbyDestroyListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyDestroyRequest = New TEOSLobbyDestroyRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyDestroyRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyDestroyListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyDestroy(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyDestroyRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSLobbyLeaveRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLobbyLeaveListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSLobbyLeaveRequest(owner:TEOSPlatform, listener:IEOSLobbyLeaveListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSLobbyLeaveRequest = New TEOSLobbyLeaveRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSLobbyLeaveRequest, result:EEOSResult, lobbyId:String) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSLobbyLeaveListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSLobbyLeave(result, lobbyId)
+	End Function
+
+	Function _Cancel(request:TEOSLobbyLeaveRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, "")
 	End Function
 
 	Method IsComplete:Int()
@@ -2880,6 +3038,148 @@ Type TEOSPresenceModification
 	End Method
 End Type
 
+Rem
+bbdoc: EOS game-services lobby access for one platform.
+End Rem
+Type TEOSLobby
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobby(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local lobby:TEOSLobby = New TEOSLobby
+		lobby._owner = owner
+		lobby._handle = handle
+		Return lobby
+	End Function
+
+	Rem
+	bbdoc: Creates a lobby and joins the local Product User as its owner.
+	End Rem
+	Method Create:TEOSLobbyCreateRequest(options:TEOSLobbyCreateOptions, listener:IEOSLobbyCreateListener)
+		If Not _owner Or Not _owner.IsValid() Or Not options Or Not options.LocalUserId Or Not options.LocalUserId.IsValid() Or Not listener Then Return Null
+		If options.MaxMembers < 1 Or options.MaxMembers > 64 Or Not options.BucketId Then Return Null
+		Local request:TEOSLobbyCreateRequest = TEOSLobbyCreateRequest._Create(_owner, listener)
+		bmx_eos_lobby_create(_owner._NativeHandle(), _handle, request, options.LocalUserId._NativeHandle(), options.MaxMembers, options.PermissionLevel, options.PresenceEnabled, options.AllowInvites, options.BucketId, options.DisableHostMigration, options.EnableRTCRoom, options.EnableJoinById, options.RejoinAfterKickRequiresInvite, options.CrossplayOptOut)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Destroys a lobby owned by the local Product User.
+	End Rem
+	Method Destroy:TEOSLobbyDestroyRequest(localUserId:TEOSProductUserId, lobbyId:String, listener:IEOSLobbyDestroyListener)
+		If Not _ValidUser(localUserId) Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbyDestroyRequest = TEOSLobbyDestroyRequest._Create(_owner, listener)
+		bmx_eos_lobby_destroy(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), lobbyId)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Leaves a lobby as a non-owner. Owners should destroy the lobby or transfer ownership first.
+	End Rem
+	Method Leave:TEOSLobbyLeaveRequest(localUserId:TEOSProductUserId, lobbyId:String, listener:IEOSLobbyLeaveListener)
+		If Not _ValidUser(localUserId) Or Not lobbyId Or Not listener Then Return Null
+		Local request:TEOSLobbyLeaveRequest = TEOSLobbyLeaveRequest._Create(_owner, listener)
+		bmx_eos_lobby_leave(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), lobbyId)
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Copies an owned details handle for a lobby the local Product User has joined.
+	End Rem
+	Method CopyDetails:EEOSResult(localUserId:TEOSProductUserId, lobbyId:String, details:TEOSLobbyDetails Var)
+		details = Null
+		If Not _ValidUser(localUserId) Or Not lobbyId Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_lobby_copy_details(_handle, localUserId._NativeHandle(), lobbyId, handle)
+		If result = EEOSResult.Success Then details = TEOSLobbyDetails._Create(_owner, handle)
+		Return result
+	End Method
+
+	Private
+	Method _ValidUser:Int(localUserId:TEOSProductUserId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned snapshot handle for one lobby.
+about: Release it before releasing its platform. Search and join support also use this handle.
+End Rem
+Type TEOSLobbyDetails
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSLobbyDetails(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local details:TEOSLobbyDetails = New TEOSLobbyDetails
+		details._owner = owner
+		details._handle = handle
+		Return details
+	End Function
+
+	Method CopyInfo:EEOSResult(info:TEOSLobbyInfo Var)
+		info = Null
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Local lobbyId:String, ownerHandle:Byte Ptr, permissionLevel:EEOSLobbyPermissionLevel
+		Local availableSlots:UInt, maxMembers:UInt, allowInvites:Int, bucketId:String
+		Local allowHostMigration:Int, rtcRoomEnabled:Int, allowJoinById:Int
+		Local rejoinAfterKickRequiresInvite:Int, presenceEnabled:Int, allowedPlatformIds:Int[]
+		Local result:EEOSResult = bmx_eos_lobby_details_copy_info(_handle, lobbyId, ownerHandle, permissionLevel, availableSlots, maxMembers, allowInvites, bucketId, allowHostMigration, rtcRoomEnabled, allowJoinById, rejoinAfterKickRequiresInvite, presenceEnabled, allowedPlatformIds)
+		If result = EEOSResult.Success Then
+			info = New TEOSLobbyInfo
+			info.LobbyId = lobbyId
+			info.OwnerUserId = TEOSProductUserId._Create(ownerHandle)
+			info.PermissionLevel = permissionLevel
+			info.AvailableSlots = availableSlots
+			info.MaxMembers = maxMembers
+			info.AllowInvites = allowInvites
+			info.BucketId = bucketId
+			info.AllowHostMigration = allowHostMigration
+			info.RTCRoomEnabled = rtcRoomEnabled
+			info.AllowJoinById = allowJoinById
+			info.RejoinAfterKickRequiresInvite = rejoinAfterKickRequiresInvite
+			info.PresenceEnabled = presenceEnabled
+			info.AllowedPlatformIds = allowedPlatformIds
+		End If
+		Return result
+	End Method
+
+	Method MemberCount:UInt()
+		If Not IsValid() Then Return 0
+		Return bmx_eos_lobby_details_get_member_count(_handle)
+	End Method
+
+	Method MemberByIndex:TEOSProductUserId(index:UInt)
+		If Not IsValid() Then Return Null
+		Return TEOSProductUserId._Create(bmx_eos_lobby_details_get_member_by_index(_handle, index))
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_lobby_details_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
+	End Method
+End Type
+
 Private
 
 Extern
@@ -2904,6 +3204,7 @@ Extern
 	Function bmx_eos_platform_get_user_info_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -2985,6 +3286,15 @@ Extern
 	Function bmx_eos_presence_set(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceSetRequest, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr)
 	Function bmx_eos_presence_add_notify_changed:ULong(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, subscription:TEOSPresenceChangedSubscription)
 	Function bmx_eos_presence_remove_notify_changed(id:ULong)
+
+	Function bmx_eos_lobby_create(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyCreateRequest, localUserHandle:Byte Ptr, maxMembers:UInt, permissionLevel:EEOSLobbyPermissionLevel, presenceEnabled:Int, allowInvites:Int, bucketId:String, disableHostMigration:Int, enableRTCRoom:Int, enableJoinById:Int, rejoinAfterKickRequiresInvite:Int, crossplayOptOut:Int)
+	Function bmx_eos_lobby_destroy(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyDestroyRequest, localUserHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_leave(platformHandle:Byte Ptr, lobbyHandle:Byte Ptr, request:TEOSLobbyLeaveRequest, localUserHandle:Byte Ptr, lobbyId:String)
+	Function bmx_eos_lobby_copy_details:EEOSResult(lobbyHandle:Byte Ptr, localUserHandle:Byte Ptr, lobbyId:String, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_lobby_details_release(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_copy_info:EEOSResult(detailsHandle:Byte Ptr, lobbyId:String Var, ownerUserHandle:Byte Ptr Var, permissionLevel:EEOSLobbyPermissionLevel Var, availableSlots:UInt Var, maxMembers:UInt Var, allowInvites:Int Var, bucketId:String Var, allowHostMigration:Int Var, rtcRoomEnabled:Int Var, allowJoinById:Int Var, rejoinAfterKickRequiresInvite:Int Var, presenceEnabled:Int Var, allowedPlatformIds:Int[] Var)
+	Function bmx_eos_lobby_details_get_member_count:UInt(detailsHandle:Byte Ptr)
+	Function bmx_eos_lobby_details_get_member_by_index:Byte Ptr(detailsHandle:Byte Ptr, index:UInt)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

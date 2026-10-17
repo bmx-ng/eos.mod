@@ -9,6 +9,7 @@
 #include "../SDK/Include/eos_friends.h"
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_leaderboards.h"
+#include "../SDK/Include/eos_lobby.h"
 #include "../SDK/Include/eos_presence.h"
 #include "../SDK/Include/eos_stats.h"
 #include "../SDK/Include/eos_userinfo.h"
@@ -76,6 +77,12 @@ void eos_sdk_TEOSConnectAuthExpirationSubscription__Notify(BBObject *, EOS_Produ
 void eos_sdk_TEOSConnectAuthExpirationSubscription__Cancel(BBObject *);
 void eos_sdk_TEOSConnectLoginStatusSubscription__Notify(BBObject *, EOS_ProductUserId, EOS_ELoginStatus, EOS_ELoginStatus);
 void eos_sdk_TEOSConnectLoginStatusSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyCreateRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyCreateRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyDestroyRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyDestroyRequest__Cancel(BBObject *);
+void eos_sdk_TEOSLobbyLeaveRequest__Complete(BBObject *, EOS_EResult, BBString *);
+void eos_sdk_TEOSLobbyLeaveRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -110,7 +117,10 @@ enum class RequestKind {
 	UserInfoQueryByExternalAccount,
 	FriendsQuery,
 	PresenceQuery,
-	PresenceSet
+	PresenceSet,
+	LobbyCreate,
+	LobbyDestroy,
+	LobbyLeave
 };
 
 struct RequestContext {
@@ -209,6 +219,15 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::PresenceSet:
 			eos_sdk_TEOSPresenceSetRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyCreate:
+			eos_sdk_TEOSLobbyCreateRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyDestroy:
+			eos_sdk_TEOSLobbyDestroyRequest__Cancel(context->request);
+			break;
+		case RequestKind::LobbyLeave:
+			eos_sdk_TEOSLobbyLeaveRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -734,6 +753,36 @@ void EOS_CALL ConnectLoginStatusCallback(const EOS_Connect_LoginStatusChangedCal
 		data->PreviousStatus, data->CurrentStatus);
 }
 
+void EOS_CALL LobbyCreateCallback(const EOS_Lobby_CreateLobbyCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyCreateRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyDestroyCallback(const EOS_Lobby_DestroyLobbyCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyDestroyRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
+void EOS_CALL LobbyLeaveCallback(const EOS_Lobby_LeaveLobbyCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSLobbyLeaveRequest__Complete(context->request, data->ResultCode,
+		ToBBString(data->LobbyId));
+	if (terminal) delete context;
+}
+
 } // namespace
 
 extern "C" {
@@ -892,6 +941,10 @@ EOS_HFriends bmx_eos_platform_get_friends_interface(EOS_HPlatform handle) {
 
 EOS_HPresence bmx_eos_platform_get_presence_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetPresenceInterface(handle) : nullptr;
+}
+
+EOS_HLobby bmx_eos_platform_get_lobby_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetLobbyInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -1829,6 +1882,115 @@ void bmx_eos_login_remove_notify(uint64_t id) {
 	auto found = std::find_if(g_loginNotifications.begin(), g_loginNotifications.end(),
 		[id](const LoginNotificationContext *context) { return context->id == id; });
 	if (found != g_loginNotifications.end()) RemoveLoginNotification(*found);
+}
+
+void bmx_eos_lobby_create(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_ProductUserId localUserId, unsigned int maxMembers, EOS_ELobbyPermissionLevel permissionLevel,
+	int presenceEnabled, int allowInvites, BBString *maxBucketId, int disableHostMigration,
+	int enableRtcRoom, int enableJoinById, int rejoinAfterKickRequiresInvite, int crossplayOptOut) {
+	UTF8String bucketId(maxBucketId);
+	EOS_Lobby_CreateLobbyOptions options{};
+	options.ApiVersion = EOS_LOBBY_CREATELOBBY_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.MaxLobbyMembers = maxMembers;
+	options.PermissionLevel = permissionLevel;
+	options.bPresenceEnabled = presenceEnabled ? EOS_TRUE : EOS_FALSE;
+	options.bAllowInvites = allowInvites ? EOS_TRUE : EOS_FALSE;
+	options.BucketId = bucketId.required();
+	options.bDisableHostMigration = disableHostMigration ? EOS_TRUE : EOS_FALSE;
+	options.bEnableRTCRoom = enableRtcRoom ? EOS_TRUE : EOS_FALSE;
+	options.LocalRTCOptions = nullptr;
+	options.LobbyId = nullptr;
+	options.bEnableJoinById = enableJoinById ? EOS_TRUE : EOS_FALSE;
+	options.bRejoinAfterKickRequiresInvite = rejoinAfterKickRequiresInvite ? EOS_TRUE : EOS_FALSE;
+	options.AllowedPlatformIds = nullptr;
+	options.AllowedPlatformIdsCount = 0;
+	options.bCrossplayOptOut = crossplayOptOut ? EOS_TRUE : EOS_FALSE;
+	options.RTCRoomJoinActionType = EOS_ELobbyRTCRoomJoinActionType::EOS_LRRJAT_AutomaticJoin;
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyCreate);
+	EOS_Lobby_CreateLobby(lobby, &options, context, LobbyCreateCallback);
+}
+
+void bmx_eos_lobby_destroy(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_ProductUserId localUserId, BBString *maxLobbyId) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_Lobby_DestroyLobbyOptions options{};
+	options.ApiVersion = EOS_LOBBY_DESTROYLOBBY_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.LobbyId = lobbyId.required();
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyDestroy);
+	EOS_Lobby_DestroyLobby(lobby, &options, context, LobbyDestroyCallback);
+}
+
+void bmx_eos_lobby_leave(EOS_HPlatform platform, EOS_HLobby lobby, BBObject *request,
+	EOS_ProductUserId localUserId, BBString *maxLobbyId) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_Lobby_LeaveLobbyOptions options{};
+	options.ApiVersion = EOS_LOBBY_LEAVELOBBY_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.LobbyId = lobbyId.required();
+	auto *context = CreateRequest(platform, request, RequestKind::LobbyLeave);
+	EOS_Lobby_LeaveLobby(lobby, &options, context, LobbyLeaveCallback);
+}
+
+EOS_EResult bmx_eos_lobby_copy_details(EOS_HLobby lobby, EOS_ProductUserId localUserId,
+	BBString *maxLobbyId, EOS_HLobbyDetails *detailsHandle) {
+	UTF8String lobbyId(maxLobbyId);
+	EOS_Lobby_CopyLobbyDetailsHandleOptions options{};
+	options.ApiVersion = EOS_LOBBY_COPYLOBBYDETAILSHANDLE_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.LobbyId = lobbyId.required();
+	return EOS_Lobby_CopyLobbyDetailsHandle(lobby, &options, detailsHandle);
+}
+
+void bmx_eos_lobby_details_release(EOS_HLobbyDetails details) {
+	if (details) EOS_LobbyDetails_Release(details);
+}
+
+EOS_EResult bmx_eos_lobby_details_copy_info(EOS_HLobbyDetails details,
+	BBString **lobbyId, EOS_ProductUserId *ownerUserId, EOS_ELobbyPermissionLevel *permissionLevel,
+	unsigned int *availableSlots, unsigned int *maxMembers, int *allowInvites, BBString **bucketId,
+	int *allowHostMigration, int *rtcRoomEnabled, int *allowJoinById,
+	int *rejoinAfterKickRequiresInvite, int *presenceEnabled, BBArray **allowedPlatformIds) {
+	EOS_LobbyDetails_CopyInfoOptions options{};
+	options.ApiVersion = EOS_LOBBYDETAILS_COPYINFO_API_LATEST;
+	EOS_LobbyDetails_Info *info = nullptr;
+	EOS_EResult result = EOS_LobbyDetails_CopyInfo(details, &options, &info);
+	if (result != EOS_EResult::EOS_Success || !info) return result;
+	*lobbyId = ToBBString(info->LobbyId);
+	*ownerUserId = info->LobbyOwnerUserId;
+	*permissionLevel = info->PermissionLevel;
+	*availableSlots = info->AvailableSlots;
+	*maxMembers = info->MaxMembers;
+	*allowInvites = info->bAllowInvites == EOS_TRUE;
+	*bucketId = ToBBString(info->BucketId);
+	*allowHostMigration = info->bAllowHostMigration == EOS_TRUE;
+	*rtcRoomEnabled = info->bRTCRoomEnabled == EOS_TRUE;
+	*allowJoinById = info->bAllowJoinById == EOS_TRUE;
+	*rejoinAfterKickRequiresInvite = info->bRejoinAfterKickRequiresInvite == EOS_TRUE;
+	*presenceEnabled = info->bPresenceEnabled == EOS_TRUE;
+	std::vector<int> platforms;
+	platforms.reserve(info->AllowedPlatformIdsCount);
+	for (uint32_t index = 0; index < info->AllowedPlatformIdsCount; ++index) {
+		platforms.push_back(static_cast<int>(info->AllowedPlatformIds[index]));
+	}
+	*allowedPlatformIds = IntArray(platforms);
+	EOS_LobbyDetails_Info_Release(info);
+	return result;
+}
+
+unsigned int bmx_eos_lobby_details_get_member_count(EOS_HLobbyDetails details) {
+	EOS_LobbyDetails_GetMemberCountOptions options{};
+	options.ApiVersion = EOS_LOBBYDETAILS_GETMEMBERCOUNT_API_LATEST;
+	return EOS_LobbyDetails_GetMemberCount(details, &options);
+}
+
+EOS_ProductUserId bmx_eos_lobby_details_get_member_by_index(EOS_HLobbyDetails details,
+	unsigned int index) {
+	EOS_LobbyDetails_GetMemberByIndexOptions options{};
+	options.ApiVersion = EOS_LOBBYDETAILS_GETMEMBERBYINDEX_API_LATEST;
+	options.MemberIndex = index;
+	return EOS_LobbyDetails_GetMemberByIndex(details, &options);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

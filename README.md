@@ -18,6 +18,7 @@ The current foundation covers:
 - User Info account, display-name, and external-account queries with copied cache access
 - Friends list, blocklist, relationship-status queries, and change notifications
 - Presence queries, publishing, and change notifications, with copied status, rich text, product details, and data records
+- Lobby creation, destruction, leaving, and copied lobby/member snapshots
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -101,6 +102,10 @@ rich text, product information, and custom data records. Its explicit `write`
 mode publishes an online status and test rich-text value, then queries it back.
 The example also registers a removable presence-change subscription.
 
+The [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) example signs in through Auth
+and Connect, creates a temporary invite-only lobby, copies its details and
+member count, then destroys it. The client policy must permit Lobby actions.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
@@ -108,7 +113,7 @@ The suggested implementation sequence is:
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
 2. Achievements, Stats, and Leaderboards (core interfaces implemented)
 3. User Info, Friends, and Presence (core read interfaces implemented)
-4. Lobbies and Sessions
+4. Lobbies and Sessions (Lobby lifecycle foundation implemented)
 5. P2P
 6. Player Data Storage and Title Storage
 7. RTC
