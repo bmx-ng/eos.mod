@@ -67,7 +67,7 @@ Type TAchievementsFlow Implements IEOSAuthLoginListener, IEOSConnectLoginListene
 			Print "Player achievements cached: " + count
 			For Local index:Int = 0 Until count
 				Local achievement:TEOSPlayerAchievement
-				If Achievements.CopyPlayerAchievementByIndex(localUserId, targetUserId, index, achievement) = EEOSResult.Success Then Print achievement.AchievementId + ": " + achievement.Progress + "%"
+				If Achievements.CopyPlayerAchievementByIndex(localUserId, targetUserId, index, achievement) = EEOSResult.Success Then Print achievement.AchievementId + ": " + (achievement.Progress * 100.0) + "%"
 			Next
 		End If
 		If result = EEOSResult.Success And UnlockRequested And UnlockAchievementId Then

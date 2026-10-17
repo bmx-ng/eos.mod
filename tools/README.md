@@ -56,6 +56,18 @@ After Connect succeeds, the app performs read-only Stats, Achievements, and
 Leaderboards queries and reports the number of configured definitions and
 cached player values. It never ingests a stat or unlocks an achievement.
 
+For an explicit integration test, pass `write` as the third argument after the
+config path and login mode. The app discovers the first configured
+achievement's stat threshold, ingests the amount needed to reach it, and polls
+until the stat value, achievement unlock, and leaderboard record propagate:
+
+```sh
+open tools/eos_auth_consent.app --args sdk.mod/examples/eos.local.conf developer write
+```
+
+This mode changes persistent test-user data and may permanently unlock the
+achievement. It is never selected from the normal interactive login screen.
+
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
 event loop; a Max2D window is sufficient and MaxGUI is not required.

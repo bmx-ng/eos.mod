@@ -390,6 +390,7 @@ End Type
 
 Type TEOSPlayerAchievement
 	Field AchievementId:String
+	' Normalized progress in the range 0.0 (locked) through 1.0 (unlocked).
 	Field Progress:Double
 	Field UnlockTime:Long = EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED
 	Field DisplayName:String

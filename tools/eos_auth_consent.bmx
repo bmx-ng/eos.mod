@@ -22,6 +22,7 @@ Global done:Int
 Global succeeded:Int
 Global latestLog:String
 Global pendingProductUser:Int
+Global writeMode:Int
 
 Type TConsoleLogListener Implements IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
@@ -29,7 +30,7 @@ Type TConsoleLogListener Implements IEOSLogListener
 	End Method
 End Type
 
-Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener
+Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginListener, IEOSConnectCreateUserListener, IEOSStatsQueryListener, IEOSStatsIngestListener, IEOSAchievementsQueryDefinitionsListener, IEOSAchievementsQueryPlayerListener, IEOSAchievementsUnlockedListener, IEOSLeaderboardsQueryDefinitionsListener, IEOSLeaderboardsQueryRanksListener
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
 	Field Stats:TEOSStats
@@ -43,6 +44,20 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 	Field PlayerAchievementCount:Int
 	Field LeaderboardCount:Int
 	Field RecordCount:Int
+	Field WriteTest:Int
+	Field RefreshStage:Int
+	Field RefreshAt:Int
+	Field RefreshAttempts:Int
+	Field TestStatName:String
+	Field TestAchievementId:String
+	Field TestThreshold:Int
+	Field TestCurrentValue:Int
+	Field TestProgress:Double
+	Field TestLeaderboardId:String
+	Field TestAggregation:EEOSLeaderboardAggregation
+	Field StatObserved:Int
+	Field UnlockObserved:Int
+	Field UnlockedSubscription:TEOSAchievementsUnlockedSubscription
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		If pinGrantInfo Then
@@ -131,6 +146,7 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 
 	Method Complete(localUserId:TEOSProductUserId)
 		ProductUserId = localUserId
+		If WriteTest Then UnlockedSubscription = Achievements.AddNotifyAchievementsUnlocked(Self)
 		statusKind = 1
 		statusTitle = "Checking Stats..."
 		statusDetail = "Querying all configured stats without changing them."
@@ -144,6 +160,18 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Fail("Stats query failed", result); Return
 		StatsCount = Stats.StatsCount(targetUserId)
+		If RefreshStage Then
+			Local stat:TEOSStat
+			If Stats.CopyStatByName(targetUserId, TestStatName, stat) = EEOSResult.Success Then
+				StatObserved = True
+				TestCurrentValue = stat.Value
+			End If
+			Local playerOptions:TEOSAchievementsQueryPlayerOptions = New TEOSAchievementsQueryPlayerOptions
+			playerOptions.LocalUserId = ProductUserId
+			playerOptions.TargetUserId = ProductUserId
+			If Not Achievements.QueryPlayerAchievements(playerOptions, Self) Then Fail("Could not refresh player achievements", EEOSResult.InvalidState)
+			Return
+		End If
 		statusTitle = "Checking Achievements..."
 		statusDetail = "Stats succeeded; querying achievement definitions."
 		Local options:TEOSAchievementsQueryDefinitionsOptions = New TEOSAchievementsQueryDefinitionsOptions
@@ -155,6 +183,16 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Fail("Achievement definitions failed", result); Return
 		DefinitionCount = Achievements.DefinitionCount()
+		If DefinitionCount > 0 Then
+			Local definition:TEOSAchievementDefinition
+			If Achievements.CopyDefinitionByIndex(0, definition) = EEOSResult.Success Then
+				TestAchievementId = definition.AchievementId
+				If definition.StatThresholds And definition.StatThresholds.Length > 0 Then
+					TestStatName = definition.StatThresholds[0].Name
+					TestThreshold = definition.StatThresholds[0].Threshold
+				End If
+			End If
+		End If
 		Local options:TEOSAchievementsQueryPlayerOptions = New TEOSAchievementsQueryPlayerOptions
 		options.LocalUserId = ProductUserId
 		options.TargetUserId = ProductUserId
@@ -165,6 +203,24 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Fail("Player achievements failed", result); Return
 		PlayerAchievementCount = Achievements.PlayerAchievementCount(targetUserId)
+		If TestAchievementId Then
+			Local achievement:TEOSPlayerAchievement
+			If Achievements.CopyPlayerAchievementById(localUserId, targetUserId, TestAchievementId, achievement) = EEOSResult.Success Then
+				TestProgress = achievement.Progress
+				If achievement.UnlockTime <> EOS_ACHIEVEMENTS_UNLOCKTIME_UNDEFINED Then UnlockObserved = True
+				For Local statInfo:TEOSPlayerAchievementStatInfo = EachIn achievement.StatInfo
+					If statInfo.Name = TestStatName Then TestCurrentValue = statInfo.CurrentValue
+				Next
+			End If
+		End If
+		If RefreshStage Then
+			If TestLeaderboardId Then
+				If Not Leaderboards.QueryRanks(ProductUserId, TestLeaderboardId, Self) Then Fail("Could not refresh leaderboard ranks", EEOSResult.InvalidState)
+			Else
+				EvaluateWriteTest()
+			End If
+			Return
+		End If
 		statusTitle = "Checking Leaderboards..."
 		statusDetail = "Achievements succeeded; querying leaderboard definitions."
 		Local options:TEOSLeaderboardsQueryDefinitionsOptions = New TEOSLeaderboardsQueryDefinitionsOptions
@@ -177,10 +233,16 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If result <> EEOSResult.Success Then Fail("Leaderboard definitions failed", result); Return
 		LeaderboardCount = Leaderboards.DefinitionCount()
 		If LeaderboardCount > 0 Then
-			Local definition:TEOSLeaderboardDefinition
-			result = Leaderboards.CopyDefinitionByIndex(0, definition)
-			If result <> EEOSResult.Success Then Fail("Could not copy leaderboard definition", result); Return
-			If Not Leaderboards.QueryRanks(ProductUserId, definition.LeaderboardId, Self) Then Fail("Could not query leaderboard ranks", EEOSResult.InvalidState)
+			For Local index:Int = 0 Until LeaderboardCount
+				Local definition:TEOSLeaderboardDefinition
+				result = Leaderboards.CopyDefinitionByIndex(index, definition)
+				If result <> EEOSResult.Success Then Fail("Could not copy leaderboard definition", result); Return
+				If Not TestLeaderboardId Or definition.StatName = TestStatName Then
+					TestLeaderboardId = definition.LeaderboardId
+					TestAggregation = definition.Aggregation
+				End If
+			Next
+			If Not Leaderboards.QueryRanks(ProductUserId, TestLeaderboardId, Self) Then Fail("Could not query leaderboard ranks", EEOSResult.InvalidState)
 		Else
 			FinishServiceChecks()
 		End If
@@ -190,15 +252,82 @@ Type TAuthConnectListener Implements IEOSAuthLoginListener, IEOSConnectLoginList
 		If Not EOSResultIsOperationComplete(result) Then Return
 		If result <> EEOSResult.Success Then Fail("Leaderboard ranks failed", result); Return
 		RecordCount = Leaderboards.RecordCount()
-		FinishServiceChecks()
+		If RefreshStage Then EvaluateWriteTest() Else FinishServiceChecks()
 	End Method
 
 	Method FinishServiceChecks()
+		If WriteTest Then
+			If Not TestStatName Or TestThreshold <= 0 Then Fail("No achievement stat threshold found", EEOSResult.NotFound); Return
+			Local amount:Int = TestThreshold
+			If TestAggregation = EEOSLeaderboardAggregation.Sum Then amount = TestThreshold - TestCurrentValue
+			If amount <= 0 Then amount = 1
+			Local data:TEOSStatsIngestData = New TEOSStatsIngestData
+			data.Name = TestStatName
+			data.IngestAmount = amount
+			Local options:TEOSStatsIngestOptions = New TEOSStatsIngestOptions
+			options.LocalUserId = ProductUserId
+			options.TargetUserId = ProductUserId
+			options.Stats = [data]
+			statusKind = 1
+			statusTitle = "Ingesting test stat..."
+			statusDetail = TestStatName + " +" + amount + " toward " + TestAchievementId
+			If Not Stats.Ingest(options, Self) Then Fail("Could not start stat ingest", EEOSResult.InvalidState)
+			Return
+		End If
 		succeeded = True
 		done = True
 		statusKind = 2
 		statusTitle = "EOS service checks completed"
 		statusDetail = "Stats " + StatsCount + " | Achievements " + PlayerAchievementCount + "/" + DefinitionCount + " | Leaderboards " + RecordCount + "/" + LeaderboardCount
+	End Method
+
+	Method OnEOSStatsIngest(result:EEOSResult, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Fail("Stat ingest failed", result); Return
+		RefreshStage = True
+		RefreshAttempts = 0
+		ScheduleRefresh()
+	End Method
+
+	Method OnEOSAchievementUnlocked(userId:TEOSProductUserId, achievementId:String, unlockTime:Long)
+		If achievementId = TestAchievementId Then UnlockObserved = True
+	End Method
+
+	Method ScheduleRefresh()
+		RefreshAt = MilliSecs() + 3000
+		statusKind = 1
+		statusTitle = "Waiting for EOS processing..."
+		statusDetail = "Attempt " + (RefreshAttempts + 1) + ": stat, achievement, and rank will be queried again."
+	End Method
+
+	Method Update()
+		If Not RefreshAt Or MilliSecs() < RefreshAt Then Return
+		RefreshAt = 0
+		RefreshAttempts :+ 1
+		Local options:TEOSStatsQueryOptions = New TEOSStatsQueryOptions
+		options.LocalUserId = ProductUserId
+		options.TargetUserId = ProductUserId
+		options.StatNames = [TestStatName]
+		If Not Stats.Query(options, Self) Then Fail("Could not refresh Stats", EEOSResult.InvalidState)
+	End Method
+
+	Method EvaluateWriteTest()
+		If StatObserved And (UnlockObserved Or TestProgress >= 1.0) And (Not TestLeaderboardId Or RecordCount > 0) Then
+			succeeded = True
+			done = True
+			statusKind = 2
+			statusTitle = "EOS write pipeline completed"
+			statusDetail = TestStatName + "=" + TestCurrentValue + " | Achievement " + (TestProgress * 100.0) + "% | Rank records " + RecordCount
+			Return
+		End If
+		If RefreshAttempts >= 20 Then
+			done = True
+			statusKind = 3
+			statusTitle = "EOS backend processing is still pending"
+			statusDetail = TestStatName + "=" + TestCurrentValue + " | Achievement " + (TestProgress * 100.0) + "% | Rank records " + RecordCount
+		Else
+			ScheduleRefresh()
+		End If
 	End Method
 
 	Method Fail(title:String, result:EEOSResult)
@@ -308,8 +437,13 @@ Function DrawScreen()
 		If userCode Then DrawText "Code: " + userCode, 70, 263
 	Else
 		If done And succeeded Then
-			DrawText "All read-only EOS service queries returned successfully.", 70, 205
-			DrawText "Zero values mean this Product User has no ingested data yet.", 70, 242
+			If writeMode Then
+				DrawText "Stat ingestion, achievement progress, and ranking succeeded.", 70, 205
+				DrawText "The test achievement may now be permanently unlocked.", 70, 242
+			Else
+				DrawText "All read-only EOS service queries returned successfully.", 70, 205
+				DrawText "Zero values mean this Product User has no ingested data yet.", 70, 242
+			End If
 		Else If done Then
 			DrawText "The test stopped at the service named above.", 70, 205
 			DrawText "Check the client policy and latest EOS log message.", 70, 242
@@ -341,6 +475,7 @@ Local completedMainLoop:Int
 Local configPath:String = FindConfig()
 Local loginMode:String
 If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
+If AppArgs.Length > 3 And AppArgs[3].ToLower() = "write" Then writeMode = True
 If Not configPath Then
 	statusKind = 3
 	statusTitle = "eos.local.conf was not found"
@@ -387,6 +522,7 @@ Else
 			listener.Stats = stats
 			listener.Achievements = achievements
 			listener.Leaderboards = leaderboards
+			listener.WriteTest = writeMode
 			listener.CreateMissingProductUser = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
 			If Not auth Or Not connect Or Not stats Or Not achievements Or Not leaderboards Then
 				statusKind = 3
@@ -402,6 +538,7 @@ Else
 
 			While Not KeyHit(KEY_ESCAPE) And Not AppTerminate()
 				platform.Tick()
+				listener.Update()
 				If Not done And Not loginMode Then
 					If KeyHit(KEY_A) Then
 						loginMode = "account-portal"
@@ -415,6 +552,7 @@ Else
 				DrawScreen()
 			Wend
 			completedMainLoop = True
+			If listener.UnlockedSubscription Then listener.UnlockedSubscription.Remove()
 			platform.Release()
 		End If
 

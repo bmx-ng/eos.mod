@@ -60,6 +60,8 @@ the Account Portal consent flow and Developer Authentication Tool login, then
 continues through Connect, optional Product User creation, and read-only Stats,
 Achievements, and Leaderboards checks. On macOS, Auth UI requires a GUI `.app`
 context; see [`tools/README.md`](tools/README.md).
+An explicitly selected `write` mode can validate the complete stat ingestion,
+automatic achievement unlock, and leaderboard propagation pipeline.
 
 The [`stats.bmx`](sdk.mod/examples/stats.bmx) example continues from Developer
 Auth through Connect, ingests a configured stat, queries it, and reads the
