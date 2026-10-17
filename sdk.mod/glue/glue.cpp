@@ -6,6 +6,7 @@
 #include "../SDK/Include/eos_achievements.h"
 #include "../SDK/Include/eos_auth.h"
 #include "../SDK/Include/eos_connect.h"
+#include "../SDK/Include/eos_friends.h"
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_leaderboards.h"
 #include "../SDK/Include/eos_stats.h"
@@ -56,6 +57,8 @@ void eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Complete(BBObject *, EOS_ERe
 void eos_sdk_TEOSUserInfoQueryByDisplayNameRequest__Cancel(BBObject *);
 void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId, BBString *, EOS_EExternalAccountType);
 void eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Cancel(BBObject *);
+void eos_sdk_TEOSFriendsQueryRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId);
+void eos_sdk_TEOSFriendsQueryRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -87,7 +90,8 @@ enum class RequestKind {
 	LeaderboardsQueryUserScores,
 	UserInfoQuery,
 	UserInfoQueryByDisplayName,
-	UserInfoQueryByExternalAccount
+	UserInfoQueryByExternalAccount,
+	FriendsQuery
 };
 
 struct RequestContext {
@@ -177,6 +181,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::UserInfoQueryByExternalAccount:
 			eos_sdk_TEOSUserInfoQueryByExternalAccountRequest__Cancel(context->request);
+			break;
+		case RequestKind::FriendsQuery:
+			eos_sdk_TEOSFriendsQueryRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -489,6 +496,15 @@ void EOS_CALL UserInfoQueryByExternalAccountCallback(const EOS_UserInfo_QueryUse
 	if (terminal) delete context;
 }
 
+void EOS_CALL FriendsQueryCallback(const EOS_Friends_QueryFriendsCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSFriendsQueryRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
+	if (terminal) delete context;
+}
+
 } // namespace
 
 extern "C" {
@@ -639,6 +655,10 @@ EOS_HLeaderboards bmx_eos_platform_get_leaderboards_interface(EOS_HPlatform hand
 
 EOS_HUserInfo bmx_eos_platform_get_user_info_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetUserInfoInterface(handle) : nullptr;
+}
+
+EOS_HFriends bmx_eos_platform_get_friends_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetFriendsInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -1327,6 +1347,56 @@ EOS_EResult bmx_eos_user_info_copy_external_by_id(EOS_HUserInfo userInfo,
 	EOS_UserInfo_ExternalUserInfo *info = nullptr;
 	EOS_EResult result = EOS_UserInfo_CopyExternalUserInfoByAccountId(userInfo, &options, &info);
 	return CopyExternalUserInfo(info, result, accountType, accountId, displayName, displayNameSanitized);
+}
+
+void bmx_eos_friends_query(EOS_HPlatform platform, EOS_HFriends friends,
+	BBObject *request, EOS_EpicAccountId localUserId) {
+	EOS_Friends_QueryFriendsOptions options{};
+	options.ApiVersion = EOS_FRIENDS_QUERYFRIENDS_API_LATEST;
+	options.LocalUserId = localUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::FriendsQuery);
+	EOS_Friends_QueryFriends(friends, &options, context, FriendsQueryCallback);
+}
+
+int32_t bmx_eos_friends_get_count(EOS_HFriends friends, EOS_EpicAccountId localUserId) {
+	EOS_Friends_GetFriendsCountOptions options{};
+	options.ApiVersion = EOS_FRIENDS_GETFRIENDSCOUNT_API_LATEST;
+	options.LocalUserId = localUserId;
+	return EOS_Friends_GetFriendsCount(friends, &options);
+}
+
+EOS_EpicAccountId bmx_eos_friends_get_by_index(EOS_HFriends friends,
+	EOS_EpicAccountId localUserId, int32_t index) {
+	EOS_Friends_GetFriendAtIndexOptions options{};
+	options.ApiVersion = EOS_FRIENDS_GETFRIENDATINDEX_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.Index = index;
+	return EOS_Friends_GetFriendAtIndex(friends, &options);
+}
+
+EOS_EFriendsStatus bmx_eos_friends_get_status(EOS_HFriends friends,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId) {
+	EOS_Friends_GetStatusOptions options{};
+	options.ApiVersion = EOS_FRIENDS_GETSTATUS_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	return EOS_Friends_GetStatus(friends, &options);
+}
+
+int32_t bmx_eos_friends_get_blocked_count(EOS_HFriends friends, EOS_EpicAccountId localUserId) {
+	EOS_Friends_GetBlockedUsersCountOptions options{};
+	options.ApiVersion = EOS_FRIENDS_GETBLOCKEDUSERSCOUNT_API_LATEST;
+	options.LocalUserId = localUserId;
+	return EOS_Friends_GetBlockedUsersCount(friends, &options);
+}
+
+EOS_EpicAccountId bmx_eos_friends_get_blocked_by_index(EOS_HFriends friends,
+	EOS_EpicAccountId localUserId, int32_t index) {
+	EOS_Friends_GetBlockedUserAtIndexOptions options{};
+	options.ApiVersion = EOS_FRIENDS_GETBLOCKEDUSERATINDEX_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.Index = index;
+	return EOS_Friends_GetBlockedUserAtIndex(friends, &options);
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

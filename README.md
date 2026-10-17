@@ -16,6 +16,7 @@ The current foundation covers:
 - Achievement definition/player-progress queries, explicit unlocks, and notifications
 - Leaderboard definition, ranked-record, and multi-user score queries
 - User Info account, display-name, and external-account queries with copied cache access
+- Friends list, blocklist, and relationship-status queries
 - retained asynchronous requests with terminal-result and platform-release handling
 
 The Epic Online Services SDK is not included in this repository. See
@@ -88,13 +89,17 @@ display name, permitted profile fields, and linked external-account information
 from the local EOS cache. The interface also supports finding an account by its
 display name or by a linked external account.
 
+The [`friends.bmx`](sdk.mod/examples/friends.bmx) example requests the Friends
+List Auth scope, queries the signed-in account's friends and blocklist, and
+prints each cached relationship status.
+
 ## Status and roadmap
 
 The suggested implementation sequence is:
 
 1. Auth and Connect (core login lifecycle implemented; account linking and notifications remain)
 2. Achievements, Stats, and Leaderboards (core interfaces implemented)
-3. User Info (core implemented), Friends, and Presence
+3. User Info and Friends (core implemented), then Presence
 4. Lobbies and Sessions
 5. P2P
 6. Player Data Storage and Title Storage

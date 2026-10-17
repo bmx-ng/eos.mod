@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.9.0"
+ModuleInfo "Version: 0.10.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -33,6 +33,8 @@ ModuleInfo "History: 0.8.0"
 ModuleInfo "History: Added User Info account queries and cached profile copies."
 ModuleInfo "History: 0.9.0"
 ModuleInfo "History: Added User Info display-name and external-account lookups."
+ModuleInfo "History: 0.10.0"
+ModuleInfo "History: Added Friends list, blocklist, and relationship-status queries."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -281,6 +283,13 @@ End Enum
 Enum EEOSAuthTokenType
 	Client = 0
 	User = 1
+End Enum
+
+Enum EEOSFriendsStatus
+	NotFriends = 0
+	InviteSent = 1
+	InviteReceived = 2
+	Friends = 3
 End Enum
 
 Enum EEOSLeaderboardAggregation
@@ -643,6 +652,10 @@ Interface IEOSUserInfoQueryByExternalAccountListener
 	Method OnEOSUserInfoQueryByExternalAccount(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, externalAccountId:String, accountType:EEOSExternalAccountType)
 End Interface
 
+Interface IEOSFriendsQueryListener
+	Method OnEOSFriendsQuery(result:EEOSResult, localUserId:TEOSEpicAccountId)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -854,6 +867,14 @@ Type TEOSPlatform
 	Method UserInfo:TEOSUserInfoInterface()
 		If Not _handle Then Return Null
 		Return TEOSUserInfoInterface._Create(Self, bmx_eos_platform_get_user_info_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the Epic Account Services Friends interface.
+	End Rem
+	Method Friends:TEOSFriends()
+		If Not _handle Then Return Null
+		Return TEOSFriends._Create(Self, bmx_eos_platform_get_friends_interface(_handle))
 	End Method
 
 	Rem
@@ -1512,6 +1533,37 @@ Type TEOSUserInfoQueryByExternalAccountRequest
 
 	Function _Cancel(request:TEOSUserInfoQueryByExternalAccountRequest) { nomangle }
 		_Complete(request, EEOSResult.Canceled, Null, Null, "", EEOSExternalAccountType.Epic)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Type TEOSFriendsQueryRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSFriendsQueryListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSFriendsQueryRequest(owner:TEOSPlatform, listener:IEOSFriendsQueryListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSFriendsQueryRequest = New TEOSFriendsQueryRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSFriendsQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSFriendsQueryListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSFriendsQuery(result, TEOSEpicAccountId._Create(localUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSFriendsQueryRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null)
 	End Function
 
 	Method IsComplete:Int()
@@ -2178,6 +2230,64 @@ Type TEOSUserInfoInterface
 	End Function
 End Type
 
+Rem
+bbdoc: Epic Account Services friends and blocklist access for one platform.
+End Rem
+Type TEOSFriends
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSFriends(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local friends:TEOSFriends = New TEOSFriends
+		friends._owner = owner
+		friends._handle = handle
+		Return friends
+	End Function
+
+	Rem
+	bbdoc: Queries the signed-in Epic account's friends list and blocklist into the local cache.
+	End Rem
+	Method Query:TEOSFriendsQueryRequest(localUserId:TEOSEpicAccountId, listener:IEOSFriendsQueryListener)
+		If Not _ValidUser(localUserId) Or Not listener Then Return Null
+		Local request:TEOSFriendsQueryRequest = TEOSFriendsQueryRequest._Create(_owner, listener)
+		bmx_eos_friends_query(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method FriendCount:Int(localUserId:TEOSEpicAccountId)
+		If Not _ValidUser(localUserId) Then Return 0
+		Return bmx_eos_friends_get_count(_handle, localUserId._NativeHandle())
+	End Method
+
+	Method FriendAtIndex:TEOSEpicAccountId(localUserId:TEOSEpicAccountId, index:Int)
+		If Not _ValidUser(localUserId) Or index < 0 Then Return Null
+		Return TEOSEpicAccountId._Create(bmx_eos_friends_get_by_index(_handle, localUserId._NativeHandle(), index))
+	End Method
+
+	Method Status:EEOSFriendsStatus(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+		If Not _ValidUser(localUserId) Or Not targetUserId Or Not targetUserId.IsValid() Then Return EEOSFriendsStatus.NotFriends
+		Return bmx_eos_friends_get_status(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle())
+	End Method
+
+	Method BlockedUserCount:Int(localUserId:TEOSEpicAccountId)
+		If Not _ValidUser(localUserId) Then Return 0
+		Return bmx_eos_friends_get_blocked_count(_handle, localUserId._NativeHandle())
+	End Method
+
+	Method BlockedUserAtIndex:TEOSEpicAccountId(localUserId:TEOSEpicAccountId, index:Int)
+		If Not _ValidUser(localUserId) Or index < 0 Then Return Null
+		Return TEOSEpicAccountId._Create(bmx_eos_friends_get_blocked_by_index(_handle, localUserId._NativeHandle(), index))
+	End Method
+
+	Private
+	Method _ValidUser:Int(localUserId:TEOSEpicAccountId)
+		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid()
+	End Method
+End Type
+
 Private
 
 Extern
@@ -2200,6 +2310,7 @@ Extern
 	Function bmx_eos_platform_get_achievements_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_leaderboards_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_user_info_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -2253,6 +2364,13 @@ Extern
 	Function bmx_eos_user_info_copy_external_by_index:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, index:UInt, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
 	Function bmx_eos_user_info_copy_external_by_type:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedType:EEOSExternalAccountType, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
 	Function bmx_eos_user_info_copy_external_by_id:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, requestedAccountId:String, accountType:EEOSExternalAccountType Var, accountId:String Var, displayName:String Var, displayNameSanitized:String Var)
+
+	Function bmx_eos_friends_query(platformHandle:Byte Ptr, friendsHandle:Byte Ptr, request:TEOSFriendsQueryRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_friends_get_count:Int(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_friends_get_by_index:Byte Ptr(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:Int)
+	Function bmx_eos_friends_get_status:EEOSFriendsStatus(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_friends_get_blocked_count:Int(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_friends_get_blocked_by_index:Byte Ptr(friendsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:Int)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
