@@ -156,10 +156,35 @@ cache-copy methods is owned by BlitzMax and can be retained normally.
 | Leaderboards | definitions, ranks, records, user scores | [`leaderboards.bmx`](sdk.mod/examples/leaderboards.bmx) |
 | Lobbies | create, search, join, invite, attributes, membership, leave and destroy | [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) |
 | P2P | packets, connection notifications, NAT and relay settings, queue controls | [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) and [`eos_p2p_test.bmx`](tools/eos_p2p_test.bmx) |
+| Title Storage | metadata queries, streamed downloads, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
+| Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 
 The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app is the
 best first integration test because it exercises the same complete account and
 Product User flow a game needs.
+
+Storage transfers use BlitzMax `TStream` objects. Pass a file stream for direct
+disk I/O, a memory stream for in-memory data, or a custom stream for another
+destination. EOS requests and supplies the data in chunks, so large files are
+not silently collected into a second whole-file buffer. The caller owns the
+stream by default; pass `closeStream = True` to have the transfer close it before
+the completion listener runs. Set `TEOSPlatformOptions.CacheDirectory` to an
+absolute writable path before creating the platform; EOS leaves both storage
+interfaces unavailable when no cache directory or encryption key is configured.
+The encryption key must be a stable 256-bit value represented by exactly 64
+hexadecimal characters. Changing or losing it makes previously stored files
+unreadable.
+
+On macOS, build authenticated EOS examples such as `storage_streams.bmx` as a
+GUI `.app` and place `libEOSSDK-Mac-Shipping.dylib` in its `Contents/MacOS`
+directory. The Max2D event loop and Launch Services application context are
+required even when Developer Authentication is used.
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_storage_test sdk.mod/examples/storage_streams.bmx
+cp sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib tools/eos_storage_test.app/Contents/MacOS
+open tools/eos_storage_test.app --args sdk.mod/examples/eos.local.conf
+```
 
 ## Shipping the runtime library
 
@@ -206,6 +231,5 @@ consume this binding; they are intentionally not part of `eos.mod`.
 
 ## Roadmap
 
-The next broad areas are Player Data Storage and Title Storage, followed by
-RTC. Ecom, sanctions/reports, anti-cheat, mods, KWS, and other specialised EOS
-services can be added as application needs justify them.
+The next broad area is RTC. Ecom, sanctions/reports, anti-cheat, mods, KWS, and
+other specialised EOS services can be added as application needs justify them.

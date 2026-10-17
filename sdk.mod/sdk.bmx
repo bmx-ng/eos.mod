@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.17.0"
+ModuleInfo "Version: 0.18.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -50,6 +50,8 @@ ModuleInfo "History: Added Lobby creation, destruction, leaving, and detail snap
 ModuleInfo "History: 0.17.0"
 ModuleInfo "History: Added P2P packet transport and connection-control foundation."
 ModuleInfo "History: Added P2P NAT, relay, port-range, and packet-queue controls."
+ModuleInfo "History: 0.18.0"
+ModuleInfo "History: Added streaming Title Storage and Player Data Storage APIs."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -72,7 +74,9 @@ Import "-lEOSSDK-Mac-Shipping"
 ?
 
 Import "SDK/Include/*.h"
+Import BRL.Stream
 Import "glue/glue.cpp"
+Import "glue/storage_glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
@@ -171,6 +175,26 @@ Enum EEOSResult
 	AuthParentalControls = 1070
 	AuthNoRealId = 1080
 	AuthUserInterfaceRequired = 1090
+	PlayerDataStorageFilenameInvalid = 6000
+	PlayerDataStorageFilenameLengthInvalid = 6001
+	PlayerDataStorageFilenameInvalidChars = 6002
+	PlayerDataStorageFileSizeTooLarge = 6003
+	PlayerDataStorageFileSizeInvalid = 6004
+	PlayerDataStorageFileHandleInvalid = 6005
+	PlayerDataStorageDataInvalid = 6006
+	PlayerDataStorageDataLengthInvalid = 6007
+	PlayerDataStorageStartIndexInvalid = 6008
+	PlayerDataStorageRequestInProgress = 6009
+	PlayerDataStorageUserThrottled = 6010
+	PlayerDataStorageEncryptionKeyNotSet = 6011
+	PlayerDataStorageUserErrorFromDataCallback = 6012
+	PlayerDataStorageFileHeaderHasNewerVersion = 6013
+	PlayerDataStorageFileCorrupted = 6014
+	TitleStorageUserErrorFromDataCallback = 10000
+	TitleStorageEncryptionKeyNotSet = 10001
+	TitleStorageFileCorrupted = 10002
+	TitleStorageFileHeaderHasNewerVersion = 10003
+	UnexpectedError = $7fffffff
 End Enum
 
 Enum EEOSLogLevel
@@ -1236,6 +1260,22 @@ Type TEOSPlatform
 	End Method
 
 	Rem
+	bbdoc: Returns the EOS read-only Title Storage interface.
+	End Rem
+	Method TitleStorage:TEOSTitleStorage()
+		If Not _handle Then Return Null
+		Return TEOSTitleStorage._Create(Self, bmx_eos_platform_get_title_storage_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS per-user Player Data Storage interface.
+	End Rem
+	Method PlayerDataStorage:TEOSPlayerDataStorage()
+		If Not _handle Then Return Null
+		Return TEOSPlayerDataStorage._Create(Self, bmx_eos_platform_get_player_storage_interface(_handle))
+	End Method
+
+	Rem
 	bbdoc: Releases this platform. The operation is idempotent.
 	End Rem
 	Method Release()
@@ -1523,7 +1563,8 @@ Type TEOSAuthLoginStatusSubscription
 	Function _Create:TEOSAuthLoginStatusSubscription(owner:TEOSPlatform, listener:IEOSAuthLoginStatusListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSAuthLoginStatusSubscription = New TEOSAuthLoginStatusSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
 	Function _Notify(subscription:TEOSAuthLoginStatusSubscription, localUserHandle:Byte Ptr, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus) { nomangle }
@@ -1539,7 +1580,9 @@ Type TEOSAuthLoginStatusSubscription
 	End Method
 	Method Remove()
 		If Not _id Then Return
-		Local id:ULong = _id; _id = 0; _listener = Null
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
 		bmx_eos_login_remove_notify(id)
 	End Method
 	Method IsActive:Int()
@@ -1559,7 +1602,8 @@ Type TEOSConnectAuthExpirationSubscription
 	Function _Create:TEOSConnectAuthExpirationSubscription(owner:TEOSPlatform, listener:IEOSConnectAuthExpirationListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSConnectAuthExpirationSubscription = New TEOSConnectAuthExpirationSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
 	Function _Notify(subscription:TEOSConnectAuthExpirationSubscription, localUserHandle:Byte Ptr) { nomangle }
@@ -1575,7 +1619,9 @@ Type TEOSConnectAuthExpirationSubscription
 	End Method
 	Method Remove()
 		If Not _id Then Return
-		Local id:ULong = _id; _id = 0; _listener = Null
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
 		bmx_eos_login_remove_notify(id)
 	End Method
 	Method IsActive:Int()
@@ -1595,7 +1641,8 @@ Type TEOSConnectLoginStatusSubscription
 	Function _Create:TEOSConnectLoginStatusSubscription(owner:TEOSPlatform, listener:IEOSConnectLoginStatusListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSConnectLoginStatusSubscription = New TEOSConnectLoginStatusSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
 	Function _Notify(subscription:TEOSConnectLoginStatusSubscription, localUserHandle:Byte Ptr, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus) { nomangle }
@@ -1611,7 +1658,9 @@ Type TEOSConnectLoginStatusSubscription
 	End Method
 	Method Remove()
 		If Not _id Then Return
-		Local id:ULong = _id; _id = 0; _listener = Null
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
 		bmx_eos_login_remove_notify(id)
 	End Method
 	Method IsActive:Int()
@@ -1708,7 +1757,10 @@ Type TEOSAchievementsQueryDefinitionsRequest
 	Function _Complete(request:TEOSAchievementsQueryDefinitionsRequest, result:EEOSResult) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSAchievementsQueryDefinitionsListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSAchievementsQueryDefinitions(result)
 	End Function
 
@@ -1739,7 +1791,10 @@ Type TEOSAchievementsQueryPlayerRequest
 	Function _Complete(request:TEOSAchievementsQueryPlayerRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSAchievementsQueryPlayerListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSAchievementsQueryPlayer(result, TEOSProductUserId._Create(localUserHandle), TEOSProductUserId._Create(targetUserHandle))
 	End Function
 
@@ -1770,7 +1825,10 @@ Type TEOSAchievementsUnlockRequest
 	Function _Complete(request:TEOSAchievementsUnlockRequest, result:EEOSResult, userHandle:Byte Ptr, achievementsCount:UInt) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSAchievementsUnlockListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSAchievementsUnlock(result, TEOSProductUserId._Create(userHandle), achievementsCount)
 	End Function
 
@@ -1841,13 +1899,17 @@ Type TEOSLeaderboardsQueryDefinitionsRequest
 	Function _Create:TEOSLeaderboardsQueryDefinitionsRequest(owner:TEOSPlatform, listener:IEOSLeaderboardsQueryDefinitionsListener)
 		If Not owner Or Not listener Then Return Null
 		Local request:TEOSLeaderboardsQueryDefinitionsRequest = New TEOSLeaderboardsQueryDefinitionsRequest
-		request._owner = owner; request._listener = listener
+		request._owner = owner
+		request._listener = listener
 		Return request
 	End Function
 	Function _Complete(request:TEOSLeaderboardsQueryDefinitionsRequest, result:EEOSResult) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLeaderboardsQueryDefinitionsListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLeaderboardsQueryDefinitions(result)
 	End Function
 	Function _Cancel(request:TEOSLeaderboardsQueryDefinitionsRequest) { nomangle }
@@ -1867,13 +1929,17 @@ Type TEOSLeaderboardsQueryRanksRequest
 	Function _Create:TEOSLeaderboardsQueryRanksRequest(owner:TEOSPlatform, listener:IEOSLeaderboardsQueryRanksListener)
 		If Not owner Or Not listener Then Return Null
 		Local request:TEOSLeaderboardsQueryRanksRequest = New TEOSLeaderboardsQueryRanksRequest
-		request._owner = owner; request._listener = listener
+		request._owner = owner
+		request._listener = listener
 		Return request
 	End Function
 	Function _Complete(request:TEOSLeaderboardsQueryRanksRequest, result:EEOSResult, leaderboardId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLeaderboardsQueryRanksListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLeaderboardsQueryRanks(result, leaderboardId)
 	End Function
 	Function _Cancel(request:TEOSLeaderboardsQueryRanksRequest) { nomangle }
@@ -1899,7 +1965,10 @@ Type TEOSLeaderboardsQueryUserScoresRequest
 	Function _Complete(request:TEOSLeaderboardsQueryUserScoresRequest, result:EEOSResult) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLeaderboardsQueryUserScoresListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLeaderboardsQueryUserScores(result)
 	End Function
 	Function _Cancel(request:TEOSLeaderboardsQueryUserScoresRequest) { nomangle }
@@ -1962,7 +2031,10 @@ Type TEOSUserInfoQueryByDisplayNameRequest
 	Function _Complete(request:TEOSUserInfoQueryByDisplayNameRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, displayName:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSUserInfoQueryByDisplayNameListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSUserInfoQueryByDisplayName(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), displayName)
 	End Function
 
@@ -1993,7 +2065,10 @@ Type TEOSUserInfoQueryByExternalAccountRequest
 	Function _Complete(request:TEOSUserInfoQueryByExternalAccountRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, externalAccountId:String, accountType:EEOSExternalAccountType) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSUserInfoQueryByExternalAccountListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSUserInfoQueryByExternalAccount(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle), externalAccountId, accountType)
 	End Function
 
@@ -2024,7 +2099,10 @@ Type TEOSFriendsQueryRequest
 	Function _Complete(request:TEOSFriendsQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSFriendsQueryListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSFriendsQuery(result, TEOSEpicAccountId._Create(localUserHandle))
 	End Function
 
@@ -2147,7 +2225,10 @@ Type TEOSPresenceQueryRequest
 	Function _Complete(request:TEOSPresenceQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSPresenceQueryListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSPresenceQuery(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle))
 	End Function
 
@@ -2178,7 +2259,10 @@ Type TEOSPresenceSetRequest
 	Function _Complete(request:TEOSPresenceSetRequest, result:EEOSResult, localUserHandle:Byte Ptr, richPresenceResult:EEOSResult) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSPresenceSetListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSPresenceSet(result, TEOSEpicAccountId._Create(localUserHandle), richPresenceResult)
 	End Function
 
@@ -2209,7 +2293,10 @@ Type TEOSLobbyCreateRequest
 	Function _Complete(request:TEOSLobbyCreateRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyCreateListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyCreate(result, lobbyId)
 	End Function
 
@@ -2240,7 +2327,10 @@ Type TEOSLobbyDestroyRequest
 	Function _Complete(request:TEOSLobbyDestroyRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyDestroyListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyDestroy(result, lobbyId)
 	End Function
 
@@ -2271,7 +2361,10 @@ Type TEOSLobbyLeaveRequest
 	Function _Complete(request:TEOSLobbyLeaveRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyLeaveListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyLeave(result, lobbyId)
 	End Function
 
@@ -2304,7 +2397,11 @@ Type TEOSLobbyJoinRequest
 	Function _Complete(request:TEOSLobbyJoinRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyJoinListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._details = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+			request._details = Null
+		End If
 		If listener Then listener.OnEOSLobbyJoin(result, lobbyId)
 	End Function
 
@@ -2337,7 +2434,11 @@ Type TEOSLobbySearchFindRequest
 	Function _Complete(request:TEOSLobbySearchFindRequest, result:EEOSResult) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbySearchFindListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null; request._search = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+			request._search = Null
+		End If
 		If listener Then listener.OnEOSLobbySearchFind(result)
 	End Function
 
@@ -2368,7 +2469,10 @@ Type TEOSLobbyUpdateRequest
 	Function _Complete(request:TEOSLobbyUpdateRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyUpdateListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyUpdate(result, lobbyId)
 	End Function
 
@@ -2396,7 +2500,10 @@ Type TEOSLobbySendInviteRequest
 	Function _Complete(request:TEOSLobbySendInviteRequest, result:EEOSResult, lobbyId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbySendInviteListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbySendInvite(result, lobbyId)
 	End Function
 	Function _Cancel(request:TEOSLobbySendInviteRequest) { nomangle }
@@ -2422,7 +2529,10 @@ Type TEOSLobbyRejectInviteRequest
 	Function _Complete(request:TEOSLobbyRejectInviteRequest, result:EEOSResult, inviteId:String) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyRejectInviteListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyRejectInvite(result, inviteId)
 	End Function
 	Function _Cancel(request:TEOSLobbyRejectInviteRequest) { nomangle }
@@ -2448,7 +2558,10 @@ Type TEOSLobbyQueryInvitesRequest
 	Function _Complete(request:TEOSLobbyQueryInvitesRequest, result:EEOSResult, localUserHandle:Byte Ptr) { nomangle }
 		If Not request Or request._complete Then Return
 		Local listener:IEOSLobbyQueryInvitesListener = request._listener
-		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
 		If listener Then listener.OnEOSLobbyQueryInvites(result, TEOSProductUserId._Create(localUserHandle))
 	End Function
 	Function _Cancel(request:TEOSLobbyQueryInvitesRequest) { nomangle }
@@ -2468,20 +2581,44 @@ Type TEOSLobbyUpdateReceivedSubscription
 	Function _Create:TEOSLobbyUpdateReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyUpdateReceivedListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSLobbyUpdateReceivedSubscription = New TEOSLobbyUpdateReceivedSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSLobbyUpdateReceivedSubscription, lobbyId:String) { nomangle }
-		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyUpdateReceived(lobbyId)
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSLobbyUpdateReceived(lobbyId)
+		End If
 	End Function
+
 	Function _Cancel(subscription:TEOSLobbyUpdateReceivedSubscription) { nomangle }
-		If subscription Then subscription._id = 0; subscription._listener = Null
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_lobby_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSLobbyMemberUpdateReceivedSubscription
@@ -2496,17 +2633,35 @@ Type TEOSLobbyMemberUpdateReceivedSubscription
 		subscription._owner = owner; subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSLobbyMemberUpdateReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr) { nomangle }
 		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberUpdateReceived(lobbyId, TEOSProductUserId._Create(targetHandle))
 	End Function
+
 	Function _Cancel(subscription:TEOSLobbyMemberUpdateReceivedSubscription) { nomangle }
 		If subscription Then subscription._id = 0; subscription._listener = Null
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_lobby_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSLobbyMemberStatusReceivedSubscription
@@ -2518,20 +2673,44 @@ Type TEOSLobbyMemberStatusReceivedSubscription
 	Function _Create:TEOSLobbyMemberStatusReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyMemberStatusReceivedListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSLobbyMemberStatusReceivedSubscription = New TEOSLobbyMemberStatusReceivedSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSLobbyMemberStatusReceivedSubscription, lobbyId:String, targetHandle:Byte Ptr, status:EEOSLobbyMemberStatus) { nomangle }
-		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyMemberStatusReceived(lobbyId, TEOSProductUserId._Create(targetHandle), status)
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSLobbyMemberStatusReceived(lobbyId, TEOSProductUserId._Create(targetHandle), status)
+		End If
 	End Function
+
 	Function _Cancel(subscription:TEOSLobbyMemberStatusReceivedSubscription) { nomangle }
-		If subscription Then subscription._id = 0; subscription._listener = Null
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_lobby_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSLobbyInviteReceivedSubscription
@@ -2543,20 +2722,44 @@ Type TEOSLobbyInviteReceivedSubscription
 	Function _Create:TEOSLobbyInviteReceivedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteReceivedListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSLobbyInviteReceivedSubscription = New TEOSLobbyInviteReceivedSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSLobbyInviteReceivedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
-		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteReceived(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle))
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSLobbyInviteReceived(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle))
+		End If
 	End Function
+
 	Function _Cancel(subscription:TEOSLobbyInviteReceivedSubscription) { nomangle }
-		If subscription Then subscription._id = 0; subscription._listener = Null
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_lobby_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSLobbyInviteAcceptedSubscription
@@ -2568,20 +2771,44 @@ Type TEOSLobbyInviteAcceptedSubscription
 	Function _Create:TEOSLobbyInviteAcceptedSubscription(owner:TEOSPlatform, listener:IEOSLobbyInviteAcceptedListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSLobbyInviteAcceptedSubscription = New TEOSLobbyInviteAcceptedSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSLobbyInviteAcceptedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr, lobbyId:String) { nomangle }
-		If subscription And subscription._listener Then subscription._listener.OnEOSLobbyInviteAccepted(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle), lobbyId)
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSLobbyInviteAccepted(inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle), lobbyId)
+		End If
 	End Function
+
 	Function _Cancel(subscription:TEOSLobbyInviteAcceptedSubscription) { nomangle }
-		If subscription Then subscription._id = 0; subscription._listener = Null
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_lobby_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_lobby_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSPresenceChangedSubscription
@@ -3086,23 +3313,30 @@ Type TEOSLeaderboards
 	Field _handle:Byte Ptr
 	Function _Definition:TEOSLeaderboardDefinition(id:String, statName:String, aggregation:EEOSLeaderboardAggregation, startTime:Long, endTime:Long)
 		Local definition:TEOSLeaderboardDefinition = New TEOSLeaderboardDefinition
-		definition.LeaderboardId = id; definition.StatName = statName; definition.Aggregation = aggregation
-		definition.StartTime = startTime; definition.EndTime = endTime
+		definition.LeaderboardId = id
+		definition.StatName = statName
+		definition.Aggregation = aggregation
+		definition.StartTime = startTime
+		definition.EndTime = endTime
 		Return definition
 	End Function
 	Function _Record:TEOSLeaderboardRecord(userHandle:Byte Ptr, rank:UInt, score:Int, displayName:String)
 		Local record:TEOSLeaderboardRecord = New TEOSLeaderboardRecord
-		record.UserId = TEOSProductUserId._Create(userHandle); record.Rank = rank
-		record.Score = score; record.UserDisplayName = displayName
+		record.UserId = TEOSProductUserId._Create(userHandle)
+		record.Rank = rank
+		record.Score = score
+		record.UserDisplayName = displayName
 		Return record
 	End Function
 	Public
 	Function _Create:TEOSLeaderboards(owner:TEOSPlatform, handle:Byte Ptr)
 		If Not owner Or Not handle Then Return Null
 		Local leaderboards:TEOSLeaderboards = New TEOSLeaderboards
-		leaderboards._owner = owner; leaderboards._handle = handle
+		leaderboards._owner = owner
+		leaderboards._handle = handle
 		Return leaderboards
 	End Function
+
 	Method QueryDefinitions:TEOSLeaderboardsQueryDefinitionsRequest(options:TEOSLeaderboardsQueryDefinitionsOptions, listener:IEOSLeaderboardsQueryDefinitionsListener)
 		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
 		Local localHandle:Byte Ptr
@@ -3111,6 +3345,7 @@ Type TEOSLeaderboards
 		bmx_eos_leaderboards_query_definitions(_owner._NativeHandle(), _handle, request, localHandle, options.StartTime, options.EndTime)
 		Return request
 	End Method
+
 	Method QueryRanks:TEOSLeaderboardsQueryRanksRequest(localUserId:TEOSProductUserId, leaderboardId:String, listener:IEOSLeaderboardsQueryRanksListener)
 		If Not _owner Or Not _owner.IsValid() Or Not leaderboardId Or Not listener Then Return Null
 		Local localHandle:Byte Ptr
@@ -3119,10 +3354,12 @@ Type TEOSLeaderboards
 		bmx_eos_leaderboards_query_ranks(_owner._NativeHandle(), _handle, request, localHandle, leaderboardId)
 		Return request
 	End Method
+
 	Method DefinitionCount:Int()
 		If Not _owner Or Not _owner.IsValid() Then Return 0
 		Return bmx_eos_leaderboards_definition_count(_handle)
 	End Method
+
 	Method CopyDefinitionByIndex:EEOSResult(index:Int, definition:TEOSLeaderboardDefinition Var)
 		definition = Null
 		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
@@ -3131,6 +3368,7 @@ Type TEOSLeaderboards
 		If result = EEOSResult.Success Then definition = _Definition(id, statName, aggregation, startTime, endTime)
 		Return result
 	End Method
+
 	Method CopyDefinitionById:EEOSResult(leaderboardId:String, definition:TEOSLeaderboardDefinition Var)
 		definition = Null
 		If Not _owner Or Not _owner.IsValid() Or Not leaderboardId Then Return EEOSResult.InvalidParameters
@@ -3139,10 +3377,12 @@ Type TEOSLeaderboards
 		If result = EEOSResult.Success Then definition = _Definition(id, statName, aggregation, startTime, endTime)
 		Return result
 	End Method
+
 	Method RecordCount:Int()
 		If Not _owner Or Not _owner.IsValid() Then Return 0
 		Return bmx_eos_leaderboards_record_count(_handle)
 	End Method
+
 	Method CopyRecordByIndex:EEOSResult(index:Int, record:TEOSLeaderboardRecord Var)
 		record = Null
 		If Not _owner Or Not _owner.IsValid() Or index < 0 Then Return EEOSResult.InvalidParameters
@@ -3151,6 +3391,7 @@ Type TEOSLeaderboards
 		If result = EEOSResult.Success Then record = _Record(userHandle, rank, score, displayName)
 		Return result
 	End Method
+
 	Method CopyRecordByUserId:EEOSResult(userId:TEOSProductUserId, record:TEOSLeaderboardRecord Var)
 		record = Null
 		If Not _owner Or Not _owner.IsValid() Or Not userId Or Not userId.IsValid() Then Return EEOSResult.InvalidParameters
@@ -3159,6 +3400,7 @@ Type TEOSLeaderboards
 		If result = EEOSResult.Success Then record = _Record(userHandle, rank, score, displayName)
 		Return result
 	End Method
+
 	Method QueryUserScores:TEOSLeaderboardsQueryUserScoresRequest(options:TEOSLeaderboardsQueryUserScoresOptions, listener:IEOSLeaderboardsQueryUserScoresListener)
 		If Not _owner Or Not _owner.IsValid() Or Not options Or Not listener Then Return Null
 		If Not options.UserIds Or options.UserIds.Length = 0 Or Not options.StatInfo Or options.StatInfo.Length = 0 Then Return Null
@@ -3180,10 +3422,12 @@ Type TEOSLeaderboards
 		bmx_eos_leaderboards_query_user_scores(_owner._NativeHandle(), _handle, request, localHandle, userHandles, statNames, aggregations, options.StartTime, options.EndTime)
 		Return request
 	End Method
+
 	Method UserScoreCount:Int(statName:String)
 		If Not _owner Or Not _owner.IsValid() Or Not statName Then Return 0
 		Return bmx_eos_leaderboards_user_score_count(_handle, statName)
 	End Method
+
 	Method CopyUserScoreByIndex:EEOSResult(index:Int, statName:String, userScore:TEOSLeaderboardUserScore Var)
 		userScore = Null
 		If Not _owner Or Not _owner.IsValid() Or index < 0 Or Not statName Then Return EEOSResult.InvalidParameters
@@ -3195,6 +3439,7 @@ Type TEOSLeaderboards
 		End If
 		Return result
 	End Method
+
 	Method CopyUserScoreByUserId:EEOSResult(userId:TEOSProductUserId, statName:String, userScore:TEOSLeaderboardUserScore Var)
 		userScore = Null
 		If Not _owner Or Not _owner.IsValid() Or Not userId Or Not userId.IsValid() Or Not statName Then Return EEOSResult.InvalidParameters
@@ -3202,7 +3447,8 @@ Type TEOSLeaderboards
 		Local result:EEOSResult = bmx_eos_leaderboards_copy_user_score_by_user(_handle, userId._NativeHandle(), statName, userHandle, score)
 		If result = EEOSResult.Success Then
 			userScore = New TEOSLeaderboardUserScore
-			userScore.UserId = TEOSProductUserId._Create(userHandle); userScore.Score = score
+			userScore.UserId = TEOSProductUserId._Create(userHandle)
+			userScore.Score = score
 		End If
 		Return result
 	End Method
@@ -4041,20 +4287,42 @@ Type TEOSP2PConnectionRequestSubscription
 	Function _Create:TEOSP2PConnectionRequestSubscription(owner:TEOSPlatform, listener:IEOSP2PConnectionRequestListener)
 		If Not owner Or Not listener Then Return Null
 		Local subscription:TEOSP2PConnectionRequestSubscription = New TEOSP2PConnectionRequestSubscription
-		subscription._owner = owner; subscription._listener = listener
+		subscription._owner = owner
+		subscription._listener = listener
 		Return subscription
 	End Function
+
 	Function _Notify(subscription:TEOSP2PConnectionRequestSubscription, localHandle:Byte Ptr, remoteHandle:Byte Ptr, socketName:String) { nomangle }
 		If subscription And subscription._listener Then subscription._listener.OnEOSP2PConnectionRequest(TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(remoteHandle), socketName)
 	End Function
+
 	Function _Cancel(subscription:TEOSP2PConnectionRequestSubscription) { nomangle }
-		If subscription Then subscription._id = 0; subscription._listener = Null
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_p2p_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSP2PConnectionEstablishedSubscription
@@ -4075,11 +4343,24 @@ Type TEOSP2PConnectionEstablishedSubscription
 	Function _Cancel(subscription:TEOSP2PConnectionEstablishedSubscription) { nomangle }
 		If subscription Then subscription._id = 0; subscription._listener = Null
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+	Method Remove()
+		If Not _id Then
+			Return
+		End If
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSP2PConnectionInterruptedSubscription
@@ -4100,11 +4381,24 @@ Type TEOSP2PConnectionInterruptedSubscription
 	Function _Cancel(subscription:TEOSP2PConnectionInterruptedSubscription) { nomangle }
 		If subscription Then subscription._id = 0; subscription._listener = Null
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+	Method Remove()
+		If Not _id Then
+			Return
+		End If
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSP2PConnectionClosedSubscription
@@ -4125,11 +4419,24 @@ Type TEOSP2PConnectionClosedSubscription
 	Function _Cancel(subscription:TEOSP2PConnectionClosedSubscription) { nomangle }
 		If subscription Then subscription._id = 0; subscription._listener = Null
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+	Method Remove()
+		If Not _id Then
+			Return
+		End If
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSP2PIncomingPacketQueueFullSubscription
@@ -4150,11 +4457,24 @@ Type TEOSP2PIncomingPacketQueueFullSubscription
 	Function _Cancel(subscription:TEOSP2PIncomingPacketQueueFullSubscription) { nomangle }
 		If subscription Then subscription._id = 0; subscription._listener = Null
 	End Function
-	Method _SetId(id:ULong); _id = id; End Method
-	Method Remove(); If _id Then Local id:ULong = _id; _id = 0; _listener = Null; bmx_eos_p2p_remove_notify(id)
+	Method _SetId(id:ULong)
+		_id = id
 	End Method
-	Method IsActive:Int(); Return _id <> 0 And _owner And _owner.IsValid(); End Method
-	Method Delete(); Remove(); End Method
+	Method Remove()
+		If Not _id Then
+			Return
+		End If
+		Local id:ULong = _id
+		_id = 0
+		_listener = Null
+		bmx_eos_p2p_remove_notify(id)
+	End Method
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+	Method Delete()
+		Remove()
+	End Method
 End Type
 
 Type TEOSP2P
@@ -4387,6 +4707,8 @@ Extern
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_title_storage_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_player_storage_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -4541,3 +4863,6 @@ Extern
 	Function bmx_eos_product_user_id_is_valid:Int(handle:Byte Ptr)
 	Function bmx_eos_product_user_id_to_string:String(handle:Byte Ptr)
 End Extern
+
+Public
+Include "storage.bmx"

@@ -16,6 +16,8 @@
 #include "../SDK/Include/eos_userinfo.h"
 #include "../SDK/Include/eos_version.h"
 
+extern "C" void bmx_eos_storage_cancel_platform_requests(EOS_HPlatform platform);
+
 #include <algorithm>
 #include <atomic>
 #include <cstdint>
@@ -1235,6 +1237,7 @@ void bmx_eos_platform_release(EOS_HPlatform handle) {
 	if (handle) {
 		CancelPlatformRequests(handle);
 		CancelPlatformNotifications(handle);
+		bmx_eos_storage_cancel_platform_requests(handle);
 		EOS_Platform_Release(handle);
 	}
 }
