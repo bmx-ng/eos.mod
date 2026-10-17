@@ -9,6 +9,7 @@
 #include "../SDK/Include/eos_logging.h"
 #include "../SDK/Include/eos_leaderboards.h"
 #include "../SDK/Include/eos_stats.h"
+#include "../SDK/Include/eos_userinfo.h"
 #include "../SDK/Include/eos_version.h"
 
 #include <algorithm>
@@ -49,6 +50,8 @@ void eos_sdk_TEOSLeaderboardsQueryRanksRequest__Complete(BBObject *, EOS_EResult
 void eos_sdk_TEOSLeaderboardsQueryRanksRequest__Cancel(BBObject *);
 void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Complete(BBObject *, EOS_EResult);
 void eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Cancel(BBObject *);
+void eos_sdk_TEOSUserInfoQueryRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId, EOS_EpicAccountId);
+void eos_sdk_TEOSUserInfoQueryRequest__Cancel(BBObject *);
 }
 
 namespace {
@@ -77,7 +80,8 @@ enum class RequestKind {
 	AchievementsUnlock,
 	LeaderboardsQueryDefinitions,
 	LeaderboardsQueryRanks,
-	LeaderboardsQueryUserScores
+	LeaderboardsQueryUserScores,
+	UserInfoQuery
 };
 
 struct RequestContext {
@@ -158,6 +162,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::LeaderboardsQueryUserScores:
 			eos_sdk_TEOSLeaderboardsQueryUserScoresRequest__Cancel(context->request);
+			break;
+		case RequestKind::UserInfoQuery:
+			eos_sdk_TEOSUserInfoQueryRequest__Cancel(context->request);
 			break;
 		}
 		delete context;
@@ -440,6 +447,16 @@ void EOS_CALL LeaderboardsQueryUserScoresCallback(const EOS_Leaderboards_OnQuery
 	if (terminal) delete context;
 }
 
+void EOS_CALL UserInfoQueryCallback(const EOS_UserInfo_QueryUserInfoCallbackInfo *data) {
+	if (!data || !data->ClientData) return;
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) CompleteRequest(context);
+	eos_sdk_TEOSUserInfoQueryRequest__Complete(context->request, data->ResultCode,
+		data->LocalUserId, data->TargetUserId);
+	if (terminal) delete context;
+}
+
 } // namespace
 
 extern "C" {
@@ -586,6 +603,10 @@ EOS_HAchievements bmx_eos_platform_get_achievements_interface(EOS_HPlatform hand
 
 EOS_HLeaderboards bmx_eos_platform_get_leaderboards_interface(EOS_HPlatform handle) {
 	return handle ? EOS_Platform_GetLeaderboardsInterface(handle) : nullptr;
+}
+
+EOS_HUserInfo bmx_eos_platform_get_user_info_interface(EOS_HPlatform handle) {
+	return handle ? EOS_Platform_GetUserInfoInterface(handle) : nullptr;
 }
 
 void bmx_eos_auth_login(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
@@ -1155,6 +1176,37 @@ EOS_EResult bmx_eos_leaderboards_copy_user_score_by_user(EOS_HLeaderboards leade
 	EOS_Leaderboards_LeaderboardUserScore *userScore = nullptr;
 	EOS_EResult result = EOS_Leaderboards_CopyLeaderboardUserScoreByUserId(leaderboards, &options, &userScore);
 	return CopyLeaderboardUserScore(userScore, userId, score, result);
+}
+
+void bmx_eos_user_info_query(EOS_HPlatform platform, EOS_HUserInfo userInfo,
+	BBObject *request, EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId) {
+	EOS_UserInfo_QueryUserInfoOptions options{};
+	options.ApiVersion = EOS_USERINFO_QUERYUSERINFO_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	auto *context = CreateRequest(platform, request, RequestKind::UserInfoQuery);
+	EOS_UserInfo_QueryUserInfo(userInfo, &options, context, UserInfoQueryCallback);
+}
+
+EOS_EResult bmx_eos_user_info_copy(EOS_HUserInfo userInfo,
+	EOS_EpicAccountId localUserId, EOS_EpicAccountId targetUserId,
+	EOS_EpicAccountId *userId, BBString **country, BBString **displayName,
+	BBString **preferredLanguage, BBString **nickname, BBString **displayNameSanitized) {
+	EOS_UserInfo_CopyUserInfoOptions options{};
+	options.ApiVersion = EOS_USERINFO_COPYUSERINFO_API_LATEST;
+	options.LocalUserId = localUserId;
+	options.TargetUserId = targetUserId;
+	EOS_UserInfo *info = nullptr;
+	EOS_EResult result = EOS_UserInfo_CopyUserInfo(userInfo, &options, &info);
+	if (result != EOS_EResult::EOS_Success || !info) return result;
+	*userId = info->UserId;
+	*country = ToBBString(info->Country);
+	*displayName = ToBBString(info->DisplayName);
+	*preferredLanguage = ToBBString(info->PreferredLanguage);
+	*nickname = ToBBString(info->Nickname);
+	*displayNameSanitized = ToBBString(info->DisplayNameSanitized);
+	EOS_UserInfo_Release(info);
+	return result;
 }
 
 EOS_EpicAccountId bmx_eos_epic_account_id_from_string(BBString *value) {

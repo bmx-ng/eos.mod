@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.7.0"
+ModuleInfo "Version: 0.8.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -29,6 +29,8 @@ ModuleInfo "History: 0.6.0"
 ModuleInfo "History: Added leaderboard definition and rank queries."
 ModuleInfo "History: 0.7.0"
 ModuleInfo "History: Added leaderboard multi-user score queries."
+ModuleInfo "History: 0.8.0"
+ModuleInfo "History: Added User Info account queries and cached profile copies."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -326,6 +328,20 @@ Type TEOSConnectLoginOptions
 	Field UserLoginInfo:TEOSConnectUserLoginInfo
 End Type
 
+Rem
+bbdoc: User profile information copied from the local EOS cache.
+about: Fields other than UserId may be empty when the account has not supplied
+them or the application is not permitted to receive them.
+End Rem
+Type TEOSUserInfoData
+	Field UserId:TEOSEpicAccountId
+	Field Country:String
+	Field DisplayName:String
+	Field PreferredLanguage:String
+	Field Nickname:String
+	Field DisplayNameSanitized:String
+End Type
+
 Type TEOSStatsIngestData
 	Field Name:String
 	Field IngestAmount:Int
@@ -585,6 +601,10 @@ Interface IEOSLeaderboardsQueryUserScoresListener
 	Method OnEOSLeaderboardsQueryUserScores(result:EEOSResult)
 End Interface
 
+Interface IEOSUserInfoQueryListener
+	Method OnEOSUserInfoQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+End Interface
+
 Interface IEOSLogListener
 	Method OnEOSLog(category:String, message:String, level:EEOSLogLevel)
 End Interface
@@ -788,6 +808,14 @@ Type TEOSPlatform
 	Method Leaderboards:TEOSLeaderboards()
 		If Not _handle Then Return Null
 		Return TEOSLeaderboards._Create(Self, bmx_eos_platform_get_leaderboards_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the Epic Account Services User Info interface.
+	End Rem
+	Method UserInfo:TEOSUserInfoInterface()
+		If Not _handle Then Return Null
+		Return TEOSUserInfoInterface._Create(Self, bmx_eos_platform_get_user_info_interface(_handle))
 	End Method
 
 	Rem
@@ -1357,6 +1385,40 @@ Type TEOSLeaderboardsQueryUserScoresRequest
 	End Method
 End Type
 
+Type TEOSUserInfoQueryRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSUserInfoQueryListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSUserInfoQueryRequest(owner:TEOSPlatform, listener:IEOSUserInfoQueryListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryRequest = New TEOSUserInfoQueryRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSUserInfoQueryRequest, result:EEOSResult, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSUserInfoQueryListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then listener.OnEOSUserInfoQuery(result, TEOSEpicAccountId._Create(localUserHandle), TEOSEpicAccountId._Create(targetUserHandle))
+	End Function
+
+	Function _Cancel(request:TEOSUserInfoQueryRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -1901,6 +1963,55 @@ Type TEOSLeaderboards
 	End Method
 End Type
 
+Rem
+bbdoc: Epic Account Services profile queries for one platform.
+End Rem
+Type TEOSUserInfoInterface
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSUserInfoInterface(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local userInfo:TEOSUserInfoInterface = New TEOSUserInfoInterface
+		userInfo._owner = owner
+		userInfo._handle = handle
+		Return userInfo
+	End Function
+
+	Rem
+	bbdoc: Queries profile information for an Epic Account and places it in the local EOS cache.
+	End Rem
+	Method Query:TEOSUserInfoQueryRequest(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, listener:IEOSUserInfoQueryListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Or Not listener Then Return Null
+		Local request:TEOSUserInfoQueryRequest = TEOSUserInfoQueryRequest._Create(_owner, listener)
+		bmx_eos_user_info_query(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), targetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Copies cached profile information populated by a successful Query call.
+	End Rem
+	Method CopyUserInfo:EEOSResult(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId, info:TEOSUserInfoData Var)
+		info = Null
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not targetUserId Or Not targetUserId.IsValid() Then Return EEOSResult.InvalidParameters
+		Local userHandle:Byte Ptr
+		Local country:String, displayName:String, preferredLanguage:String, nickname:String, displayNameSanitized:String
+		Local result:EEOSResult = bmx_eos_user_info_copy(_handle, localUserId._NativeHandle(), targetUserId._NativeHandle(), userHandle, country, displayName, preferredLanguage, nickname, displayNameSanitized)
+		If result = EEOSResult.Success Then
+			info = New TEOSUserInfoData
+			info.UserId = TEOSEpicAccountId._Create(userHandle)
+			info.Country = country
+			info.DisplayName = displayName
+			info.PreferredLanguage = preferredLanguage
+			info.Nickname = nickname
+			info.DisplayNameSanitized = displayNameSanitized
+		End If
+		Return result
+	End Method
+End Type
+
 Private
 
 Extern
@@ -1922,6 +2033,7 @@ Extern
 	Function bmx_eos_platform_get_stats_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_achievements_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_leaderboards_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_user_info_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -1966,6 +2078,9 @@ Extern
 	Function bmx_eos_leaderboards_user_score_count:Int(leaderboardsHandle:Byte Ptr, statName:String)
 	Function bmx_eos_leaderboards_copy_user_score_by_index:EEOSResult(leaderboardsHandle:Byte Ptr, index:UInt, statName:String, userHandle:Byte Ptr Var, score:Int Var)
 	Function bmx_eos_leaderboards_copy_user_score_by_user:EEOSResult(leaderboardsHandle:Byte Ptr, requestedUserHandle:Byte Ptr, statName:String, userHandle:Byte Ptr Var, score:Int Var)
+
+	Function bmx_eos_user_info_query(platformHandle:Byte Ptr, userInfoHandle:Byte Ptr, request:TEOSUserInfoQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_user_info_copy:EEOSResult(userInfoHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, userHandle:Byte Ptr Var, country:String Var, displayName:String Var, preferredLanguage:String Var, nickname:String Var, displayNameSanitized:String Var)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)

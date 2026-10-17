@@ -31,12 +31,17 @@ the SDK cache. Copied definitions and records are independent managed values.
 Ad-hoc user-score queries accept multiple Product Users and stat/aggregation
 pairs, with results cached separately for each stat name.
 
+Platform.UserInfo() queries Epic Account profiles into the SDK cache. After a
+successful query, CopyUserInfo() returns an independent managed object containing
+the display name and any other profile fields permitted for the application.
+
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.
 See examples/stats.bmx for an Auth-to-Connect flow that ingests and queries a
 stat configured in the Developer Portal.
 See examples/achievements.bmx for definition and player-progress queries.
 See examples/leaderboards.bmx for definition and ranked-record queries.
+See examples/user_info.bmx for an Epic Account profile query and cache copy.
 
 On macOS, build interactive Auth clients as GUI application bundles. The
 tools/eos_auth_consent.bmx Max2D utility demonstrates Account Portal consent,
