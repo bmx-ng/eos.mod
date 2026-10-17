@@ -42,7 +42,8 @@ The cached IDs can be enumerated and their current relationship status checked.
 
 Platform.Presence() queries the local user or an Epic friend. Cached status,
 rich text, product information, and custom key/value records are copied into
-independent managed objects.
+independent managed objects. Owned modification objects compose status,
+raw-rich-text, and join-info changes for asynchronous publishing.
 
 See examples/auth_connect.bmx for a Developer Authentication Tool flow that
 continues from Auth to Connect using the recommended Epic ID token.

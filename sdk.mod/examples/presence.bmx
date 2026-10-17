@@ -5,10 +5,12 @@ Import BRL.FileSystem
 Import BRL.StandardIO
 Import BRL.TextStream
 
-Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener
+Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener, IEOSPresenceSetListener
 	Field Presence:TEOSPresence
 	Field Done:Int
 	Field Success:Int
+	Field WriteTest:Int
+	Field WriteStage:Int
 
 	Method OnEOSAuthLogin(result:EEOSResult, localUserId:TEOSEpicAccountId, pinGrantInfo:TEOSAuthPinGrantInfo, continuanceToken:TEOSAuthContinuanceToken, selectedAccountId:TEOSEpicAccountId)
 		Print "Auth login: " + EOSResultString(result)
@@ -42,10 +44,30 @@ Type TPresenceFlow Implements IEOSAuthLoginListener, IEOSPresenceQueryListener
 				For Local record:TEOSPresenceDataRecord = EachIn info.Records
 					Print "  " + record.Key + "=" + record.Value
 				Next
+				If WriteTest And Not WriteStage Then
+					Local modification:TEOSPresenceModification
+					result = Presence.CreateModification(localUserId, modification)
+					If result <> EEOSResult.Success Then Print "Create modification: " + EOSResultString(result); Done = True; Return
+					result = modification.SetStatus(EEOSPresenceStatus.Online)
+					If result = EEOSResult.Success Then result = modification.SetRawRichText("Testing EOS from BlitzMax")
+					If result <> EEOSResult.Success Then modification.Release(); Print "Prepare presence: " + EOSResultString(result); Done = True; Return
+					WriteStage = 1
+					If Not Presence.SetPresence(localUserId, modification, Self) Then modification.Release(); Print "Could not publish Presence."; Done = True; Return
+					modification.Release()
+					Return
+				End If
 				Success = True
 			End If
 		End If
 		Done = True
+	End Method
+
+	Method OnEOSPresenceSet(result:EEOSResult, localUserId:TEOSEpicAccountId, richPresenceResult:EEOSResult)
+		Print "Set Presence: " + EOSResultString(result)
+		Print "Rich Presence: " + EOSResultString(richPresenceResult)
+		If Not EOSResultIsOperationComplete(result) Then Return
+		If result <> EEOSResult.Success Then Done = True; Return
+		If Not Presence.Query(localUserId, localUserId, Self) Then Print "Could not verify Presence."; Done = True
 	End Method
 End Type
 
@@ -63,6 +85,8 @@ Local configPath:String = "eos.local.conf"
 If AppArgs.Length > 1 Then configPath = AppArgs[1]
 Local loginMode:String = "developer"
 If AppArgs.Length > 2 Then loginMode = AppArgs[2].ToLower()
+Local writeTest:Int
+If AppArgs.Length > 3 And AppArgs[3].ToLower() = "write" Then writeTest = True
 If FileType(configPath) <> FILETYPE_FILE Then RuntimeError "Copy eos.local.conf.example to eos.local.conf and fill in your EOS values."
 Local config:String = LoadText(configPath)
 
@@ -85,6 +109,7 @@ If Not platform Then RuntimeError "EOS platform creation failed. Check eos.local
 Local auth:TEOSAuth = platform.Auth()
 Local flow:TPresenceFlow = New TPresenceFlow
 flow.Presence = platform.Presence()
+flow.WriteTest = writeTest
 If Not auth Or Not flow.Presence Then RuntimeError "Auth or Presence interface is unavailable."
 
 Local credentials:TEOSAuthCredentials = New TEOSAuthCredentials

@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.11.0"
+ModuleInfo "Version: 0.12.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -37,6 +37,8 @@ ModuleInfo "History: 0.10.0"
 ModuleInfo "History: Added Friends list, blocklist, and relationship-status queries."
 ModuleInfo "History: 0.11.0"
 ModuleInfo "History: Added Presence queries and cached presence copies."
+ModuleInfo "History: 0.12.0"
+ModuleInfo "History: Added Presence status, rich-text, and join-info publishing."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -688,6 +690,10 @@ End Interface
 
 Interface IEOSPresenceQueryListener
 	Method OnEOSPresenceQuery(result:EEOSResult, localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
+End Interface
+
+Interface IEOSPresenceSetListener
+	Method OnEOSPresenceSet(result:EEOSResult, localUserId:TEOSEpicAccountId, richPresenceResult:EEOSResult)
 End Interface
 
 Interface IEOSLogListener
@@ -1644,6 +1650,37 @@ Type TEOSPresenceQueryRequest
 	End Method
 End Type
 
+Type TEOSPresenceSetRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSPresenceSetListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSPresenceSetRequest(owner:TEOSPlatform, listener:IEOSPresenceSetListener)
+		If Not owner Or Not listener Then Return Null
+		Local request:TEOSPresenceSetRequest = New TEOSPresenceSetRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSPresenceSetRequest, result:EEOSResult, localUserHandle:Byte Ptr, richPresenceResult:EEOSResult) { nomangle }
+		If Not request Or request._complete Then Return
+		Local listener:IEOSPresenceSetListener = request._listener
+		If EOSResultIsOperationComplete(result) Then request._complete = True; request._listener = Null
+		If listener Then listener.OnEOSPresenceSet(result, TEOSEpicAccountId._Create(localUserHandle), richPresenceResult)
+	End Function
+
+	Function _Cancel(request:TEOSPresenceSetRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled, Null, EEOSResult.Canceled)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
 Rem
 bbdoc: Epic Account Services authentication for one platform.
 End Rem
@@ -2421,9 +2458,85 @@ Type TEOSPresence
 		Return result
 	End Method
 
+	Rem
+	bbdoc: Creates an owned modification used to compose a presence update.
+	End Rem
+	Method CreateModification:EEOSResult(localUserId:TEOSEpicAccountId, modification:TEOSPresenceModification Var)
+		modification = Null
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Then Return EEOSResult.InvalidParameters
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_presence_create_modification(_handle, localUserId._NativeHandle(), handle)
+		If result = EEOSResult.Success Then modification = TEOSPresenceModification._Create(_owner, handle)
+		Return result
+	End Method
+
+	Rem
+	bbdoc: Publishes the composed presence update asynchronously.
+	about: The modification may be released immediately after this method returns.
+	End Rem
+	Method SetPresence:TEOSPresenceSetRequest(localUserId:TEOSEpicAccountId, modification:TEOSPresenceModification, listener:IEOSPresenceSetListener)
+		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId.IsValid() Or Not modification Or Not modification.IsValid() Or Not listener Then Return Null
+		Local request:TEOSPresenceSetRequest = TEOSPresenceSetRequest._Create(_owner, listener)
+		bmx_eos_presence_set(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle(), modification._NativeHandle())
+		Return request
+	End Method
+
 	Private
 	Method _ValidIds:Int(localUserId:TEOSEpicAccountId, targetUserId:TEOSEpicAccountId)
 		Return _owner And _owner.IsValid() And localUserId And localUserId.IsValid() And targetUserId And targetUserId.IsValid()
+	End Method
+End Type
+
+Rem
+bbdoc: An owned collection of changes to publish through the Presence interface.
+End Rem
+Type TEOSPresenceModification
+	Private
+	Field _owner:TEOSPlatform
+	Field _handle:Byte Ptr
+
+	Public
+	Function _Create:TEOSPresenceModification(owner:TEOSPlatform, handle:Byte Ptr)
+		If Not owner Or Not handle Then Return Null
+		Local modification:TEOSPresenceModification = New TEOSPresenceModification
+		modification._owner = owner
+		modification._handle = handle
+		Return modification
+	End Function
+
+	Method SetStatus:EEOSResult(status:EEOSPresenceStatus)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_presence_modification_set_status(_handle, status)
+	End Method
+
+	Method SetRawRichText:EEOSResult(richText:String)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_presence_modification_set_rich_text(_handle, richText)
+	End Method
+
+	Method SetJoinInfo:EEOSResult(joinInfo:String)
+		If Not IsValid() Then Return EEOSResult.InvalidState
+		Return bmx_eos_presence_modification_set_join_info(_handle, joinInfo)
+	End Method
+
+	Method IsValid:Int()
+		Return _handle And _owner And _owner.IsValid()
+	End Method
+
+	Method _NativeHandle:Byte Ptr()
+		If Not IsValid() Then Return Null
+		Return _handle
+	End Method
+
+	Method Release()
+		If Not _handle Then Return
+		Local handle:Byte Ptr = _handle
+		_handle = Null
+		bmx_eos_presence_modification_release(handle)
+	End Method
+
+	Method Delete()
+		Self.Release()
 	End Method
 End Type
 
@@ -2515,6 +2628,12 @@ Extern
 	Function bmx_eos_presence_query(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceQueryRequest, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_presence_has:Int(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
 	Function bmx_eos_presence_copy:EEOSResult(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr, status:EEOSPresenceStatus Var, userHandle:Byte Ptr Var, productId:String Var, productVersion:String Var, platform:String Var, richText:String Var, productName:String Var, integratedPlatform:String Var, recordKeys:String[] Var, recordValues:String[] Var)
+	Function bmx_eos_presence_create_modification:EEOSResult(presenceHandle:Byte Ptr, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr Var)
+	Function bmx_eos_presence_modification_release(modificationHandle:Byte Ptr)
+	Function bmx_eos_presence_modification_set_status:EEOSResult(modificationHandle:Byte Ptr, status:EEOSPresenceStatus)
+	Function bmx_eos_presence_modification_set_rich_text:EEOSResult(modificationHandle:Byte Ptr, richText:String)
+	Function bmx_eos_presence_modification_set_join_info:EEOSResult(modificationHandle:Byte Ptr, joinInfo:String)
+	Function bmx_eos_presence_set(platformHandle:Byte Ptr, presenceHandle:Byte Ptr, request:TEOSPresenceSetRequest, localUserHandle:Byte Ptr, modificationHandle:Byte Ptr)
 
 	Function bmx_eos_epic_account_id_from_string:Byte Ptr(value:String)
 	Function bmx_eos_epic_account_id_is_valid:Int(handle:Byte Ptr)
