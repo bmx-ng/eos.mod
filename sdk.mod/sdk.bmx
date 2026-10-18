@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.24.0"
+ModuleInfo "Version: 0.25.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -64,6 +64,8 @@ ModuleInfo "History: 0.23.0"
 ModuleInfo "History: Completed Sessions with keyed attributes, state diagnostics, and update validation."
 ModuleInfo "History: 0.24.0"
 ModuleInfo "History: Added Social Overlay control, display notifications, and UI event acknowledgement."
+ModuleInfo "History: 0.25.0"
+ModuleInfo "History: Added Steam Integrated Platform setup, identity state, and logout coordination."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -92,6 +94,7 @@ Import "glue/storage_glue.cpp"
 Import "glue/sanctions_reports_glue.cpp"
 Import "glue/sessions_glue.cpp"
 Import "glue/ui_glue.cpp"
+Import "glue/integrated_platform_glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
@@ -507,6 +510,7 @@ Type TEOSPlatformOptions
 	Field TickBudgetInMilliseconds:UInt
 	Field UseTaskNetworkTimeout:Int
 	Field TaskNetworkTimeoutSeconds:Double
+	Field IntegratedPlatformOptions:TEOSIntegratedPlatformOptionsContainer
 End Type
 
 Type TEOSAuthCredentials
@@ -1189,7 +1193,17 @@ Type TEOSPlatform
 	bbdoc: Creates a platform instance from developer-portal configuration.
 	End Rem
 	Function Create:TEOSPlatform(options:TEOSPlatformOptions)
-		If Not EOSIsInitialized() Or Not options Then Return Null
+		If Not EOSIsInitialized() Or Not options Then
+			Return Null
+		End If
+		Local integratedPlatformOptionsHandle:Byte Ptr
+		If options.IntegratedPlatformOptions Then
+			integratedPlatformOptionsHandle = ..
+				options.IntegratedPlatformOptions._NativeHandle()
+			If Not integratedPlatformOptionsHandle Then
+				Return Null
+			End If
+		End If
 		Return _Create(bmx_eos_platform_create(
 			options.ProductId,
 			options.SandboxId,
@@ -1204,7 +1218,8 @@ Type TEOSPlatform
 			options.Flags,
 			options.TickBudgetInMilliseconds,
 			options.UseTaskNetworkTimeout,
-			options.TaskNetworkTimeoutSeconds))
+			options.TaskNetworkTimeoutSeconds,
+			integratedPlatformOptionsHandle))
 	End Function
 
 	Rem
@@ -1308,6 +1323,17 @@ Type TEOSPlatform
 			Return Null
 		End If
 		Return TEOSUI._Create(Self, bmx_eos_platform_get_ui_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the native-service Integrated Platform interface.
+	End Rem
+	Method IntegratedPlatform:TEOSIntegratedPlatform()
+		If Not _handle Then
+			Return Null
+		End If
+		Return TEOSIntegratedPlatform._Create( ..
+			Self, bmx_eos_platform_get_integrated_platform_interface(_handle))
 	End Method
 
 	Rem
@@ -4830,7 +4856,14 @@ Extern
 	Function bmx_eos_logging_set_level:EEOSResult(category:EEOSLogCategory, level:EEOSLogLevel)
 	Function bmx_eos_logging_poll:Int(category:String Var, message:String Var, level:EEOSLogLevel Var)
 
-	Function bmx_eos_platform_create:Byte Ptr(productId:String, sandboxId:String, deploymentId:String, clientId:String, clientSecret:String, encryptionKey:String, overrideCountryCode:String, overrideLocaleCode:String, cacheDirectory:String, isServer:Int, flags:EEOSPlatformFlags, tickBudgetInMilliseconds:UInt, useTaskNetworkTimeout:Int, taskNetworkTimeoutSeconds:Double)
+	Function bmx_eos_platform_create:Byte Ptr( ..
+		productId:String, sandboxId:String, deploymentId:String, ..
+		clientId:String, clientSecret:String, encryptionKey:String, ..
+		overrideCountryCode:String, overrideLocaleCode:String, ..
+		cacheDirectory:String, isServer:Int, flags:EEOSPlatformFlags, ..
+		tickBudgetInMilliseconds:UInt, useTaskNetworkTimeout:Int, ..
+		taskNetworkTimeoutSeconds:Double, ..
+		integratedPlatformOptionsHandle:Byte Ptr)
 	Function bmx_eos_platform_tick(handle:Byte Ptr)
 	Function bmx_eos_platform_release(handle:Byte Ptr)
 	Function bmx_eos_platform_get_auth_interface:Byte Ptr(handle:Byte Ptr)
@@ -5010,3 +5043,4 @@ Include "sanctions_reports.bmx"
 Include "session.bmx"
 Include "online_sessions.bmx"
 Include "online_ui.bmx"
+Include "integrated_platform.bmx"

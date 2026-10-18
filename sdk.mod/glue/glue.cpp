@@ -20,6 +20,7 @@ extern "C" void bmx_eos_storage_cancel_platform_requests(EOS_HPlatform platform)
 extern "C" void bmx_eos_sanctions_reports_cancel_platform_requests(EOS_HPlatform platform);
 extern "C" void bmx_eos_sessions_cancel_platform_requests(EOS_HPlatform platform);
 extern "C" void bmx_eos_ui_cancel_platform_requests(EOS_HPlatform platform);
+extern "C" void bmx_eos_integrated_platform_cancel_platform_requests(EOS_HPlatform platform);
 
 #include <algorithm>
 #include <atomic>
@@ -1219,7 +1220,8 @@ EOS_HPlatform bmx_eos_platform_create(
 	int flags,
 	unsigned int tickBudgetInMilliseconds,
 	int useTaskNetworkTimeout,
-	double taskNetworkTimeoutSeconds) {
+	double taskNetworkTimeoutSeconds,
+	EOS_HIntegratedPlatformOptionsContainer integratedPlatformOptions) {
 	UTF8String productId(maxProductId);
 	UTF8String sandboxId(maxSandboxId);
 	UTF8String deploymentId(maxDeploymentId);
@@ -1245,6 +1247,7 @@ EOS_HPlatform bmx_eos_platform_create(
 	options.Flags = static_cast<uint64_t>(flags);
 	options.CacheDirectory = cacheDirectory.optional();
 	options.TickBudgetInMilliseconds = tickBudgetInMilliseconds;
+	options.IntegratedPlatformOptionsContainerHandle = integratedPlatformOptions;
 	options.TaskNetworkTimeoutSeconds = useTaskNetworkTimeout
 		? &taskNetworkTimeout
 		: nullptr;
@@ -1265,6 +1268,7 @@ void bmx_eos_platform_release(EOS_HPlatform handle) {
 		bmx_eos_sanctions_reports_cancel_platform_requests(handle);
 		bmx_eos_sessions_cancel_platform_requests(handle);
 		bmx_eos_ui_cancel_platform_requests(handle);
+		bmx_eos_integrated_platform_cancel_platform_requests(handle);
 		EOS_Platform_Release(handle);
 	}
 }
