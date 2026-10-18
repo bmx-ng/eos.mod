@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.20.0"
+ModuleInfo "Version: 0.21.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -56,6 +56,8 @@ ModuleInfo "History: 0.19.0"
 ModuleInfo "History: Added managed Auth-to-Connect sessions, refresh, retry, and persistent sign-out."
 ModuleInfo "History: 0.20.0"
 ModuleInfo "History: Added player sanctions queries, appeals, and behavior reports."
+ModuleInfo "History: 0.21.0"
+ModuleInfo "History: Added searchable game-session creation, joining, lifecycle, and membership."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -82,6 +84,7 @@ Import BRL.Stream
 Import "glue/glue.cpp"
 Import "glue/storage_glue.cpp"
 Import "glue/sanctions_reports_glue.cpp"
+Import "glue/sessions_glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
@@ -180,6 +183,26 @@ Enum EEOSResult
 	AuthParentalControls = 1070
 	AuthNoRealId = 1080
 	AuthUserInterfaceRequired = 1090
+	SessionsSessionInProgress = 5000
+	SessionsTooManyPlayers = 5001
+	SessionsNoPermission = 5002
+	SessionsSessionAlreadyExists = 5003
+	SessionsInvalidLock = 5004
+	SessionsInvalidSession = 5005
+	SessionsSandboxNotAllowed = 5006
+	SessionsInviteFailed = 5007
+	SessionsInviteNotFound = 5008
+	SessionsUpsertNotAllowed = 5009
+	SessionsAggregationFailed = 5010
+	SessionsHostAtCapacity = 5011
+	SessionsSandboxAtCapacity = 5012
+	SessionsSessionNotAnonymous = 5013
+	SessionsOutOfSync = 5014
+	SessionsTooManyInvites = 5015
+	SessionsPresenceSessionExists = 5016
+	SessionsDeploymentAtCapacity = 5017
+	SessionsNotAllowed = 5018
+	SessionsPlayerSanctioned = 5019
 	PlayerDataStorageFilenameInvalid = 6000
 	PlayerDataStorageFilenameLengthInvalid = 6001
 	PlayerDataStorageFilenameInvalidChars = 6002
@@ -1258,6 +1281,16 @@ Type TEOSPlatform
 	Method Lobby:TEOSLobby()
 		If Not _handle Then Return Null
 		Return TEOSLobby._Create(Self, bmx_eos_platform_get_lobby_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS searchable game-sessions interface.
+	End Rem
+	Method Sessions:TEOSSessions()
+		If Not _handle Then
+			Return Null
+		End If
+		Return TEOSSessions._Create(Self, bmx_eos_platform_get_sessions_interface(_handle))
 	End Method
 
 	Rem
@@ -4792,6 +4825,7 @@ Extern
 	Function bmx_eos_platform_get_friends_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_presence_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_lobby_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_sessions_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_title_storage_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_player_storage_interface:Byte Ptr(handle:Byte Ptr)
@@ -4957,3 +4991,4 @@ Public
 Include "storage.bmx"
 Include "sanctions_reports.bmx"
 Include "session.bmx"
+Include "online_sessions.bmx"

@@ -68,6 +68,13 @@ Removable Lobby subscriptions report lobby and member changes, member status,
 and invitation receipt or acceptance. Platform release removes subscriptions
 that remain registered.
 
+Platform.Sessions() publishes and finds searchable matches or servers. Session
+modifications configure capacity, permission, host address, join-in-progress,
+sanctions, and typed searchable attributes. Search results provide owned detail
+handles suitable for inspection and joining. Active-session handles expose the
+local lifecycle state and registered players. Sessions describe discovery and
+membership; EOS P2P or another transport carries gameplay data.
+
 Platform.P2P() sends and receives packets of up to 1170 bytes using named
 sockets and byte-sized channels. Reliability and delayed-delivery policy are
 selected for each send. Connections can be explicitly accepted or closed per
