@@ -16,7 +16,7 @@ CACHE_DIRECTORY=
 # Values configured in the EOS Developer Authentication Tool.
 DEV_AUTH_HOST=localhost:6547
 DEV_AUTH_CREDENTIAL=
-# Optional second credential used only by the two-account P2P test app.
+# Optional second credential used by the two-account P2P and Sessions test apps.
 DEV_AUTH_CREDENTIAL_2=
 
 # Set to 1 only when this test should create a Product User for a new login.

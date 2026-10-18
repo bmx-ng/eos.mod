@@ -18,6 +18,7 @@
 
 extern "C" void bmx_eos_storage_cancel_platform_requests(EOS_HPlatform platform);
 extern "C" void bmx_eos_sanctions_reports_cancel_platform_requests(EOS_HPlatform platform);
+extern "C" void bmx_eos_sessions_cancel_platform_requests(EOS_HPlatform platform);
 
 #include <algorithm>
 #include <atomic>
@@ -1261,6 +1262,7 @@ void bmx_eos_platform_release(EOS_HPlatform handle) {
 		CancelPlatformNotifications(handle);
 		bmx_eos_storage_cancel_platform_requests(handle);
 		bmx_eos_sanctions_reports_cancel_platform_requests(handle);
+		bmx_eos_sessions_cancel_platform_requests(handle);
 		EOS_Platform_Release(handle);
 	}
 }

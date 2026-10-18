@@ -220,6 +220,38 @@ The EOS client policy must permit the corresponding Sanctions or Reports action.
 Report context is optional, but when supplied it must be valid JSON and no more
 than `EOS_REPORTS_REPORTCONTEXT_MAX_LENGTH` characters.
 
+### Searchable game sessions
+
+`TEOSSessions` publishes and manages a playable match or server independently
+of the Lobby service. Build a `TEOSSessionModification`, set its host address,
+permission, capacity, and typed attributes, then pass it to `UpdateSession`.
+Public sessions can be found by session ID, registered player, bucket, or
+custom attribute through `TEOSSessionSearch`.
+
+A session describes where and how to join a match; it is not a gameplay
+transport. After `JoinSession` succeeds, connect using EOS P2P, a dedicated
+server address, or another transport. Register and unregister players as match
+membership changes, and use `StartSession`, `EndSession`, and `DestroySession`
+to publish the match lifecycle. `TEOSActiveSession` provides the local state
+and registered-player list.
+
+Invitations can be sent or rejected asynchronously. `QueryInvites` refreshes a
+user's invite cache; enumerate its invite IDs and copy the corresponding
+session details before joining. Removable subscriptions report invite receipt,
+acceptance and rejection, plus join and leave actions initiated through the
+EOS Social Overlay. Overlay event IDs can also be resolved directly to session
+details.
+
+The EOS client policy must permit the Sessions action. A newly published
+session can take several seconds to appear in searches. The supplied
+`sessions.bmx` GUI diagnostic publishes a temporary public session, finds and
+inspects it, starts and ends it, and finally removes it. The two-account
+`eos_sessions_test.bmx` app verifies invitation delivery, invite-cache lookup,
+joining, player registration, leaving, and cleanup. When both accounts run in
+one platform instance, EOS may populate the invite cache without emitting the
+invite-received notification; applications should treat the queried cache as
+authoritative.
+
 ## Features and examples
 
 | Area | Module support | Example or test |
@@ -233,6 +265,7 @@ than `EOS_REPORTS_REPORTCONTEXT_MAX_LENGTH` characters.
 | Achievements | definitions, progress, unlocks, notifications | [`achievements.bmx`](sdk.mod/examples/achievements.bmx) |
 | Leaderboards | definitions, ranks, records, user scores | [`leaderboards.bmx`](sdk.mod/examples/leaderboards.bmx) |
 | Lobbies | create, search, join, invite, attributes, membership, leave and destroy | [`lobbies.bmx`](sdk.mod/examples/lobbies.bmx) |
+| Sessions | publish, search, inspect, invite, join, register players, overlay events, lifecycle and cleanup | [`sessions.bmx`](sdk.mod/examples/sessions.bmx), [`eos_sessions_test.bmx`](tools/eos_sessions_test.bmx), and [`online_sessions.bmx`](sdk.mod/tests/online_sessions.bmx) |
 | P2P | packets, connection notifications, NAT and relay settings, queue controls | [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) and [`eos_p2p_test.bmx`](tools/eos_p2p_test.bmx) |
 | Title Storage | metadata queries, streamed downloads, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 | Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
@@ -315,5 +348,5 @@ confirmed session loss as an authentication failure.
 
 ## Roadmap
 
-Potential future areas include Ecom, EOS Sessions, RTC, anti-cheat, mods, KWS,
+Potential future areas include Ecom, RTC, anti-cheat, mods, KWS,
 and other specialised EOS services as application needs justify them.
