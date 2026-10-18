@@ -203,6 +203,23 @@ Product User creation is never automatic. When the coordinator enters
 for a “sign out and forget me” action; it also removes the credential used by
 future `PersistentAuth` login.
 
+### Moderation
+
+`TEOSSanctions` queries active sanctions into the EOS cache, then copies each
+result into a `TEOSPlayerSanction`. It also supports an authenticated player
+appealing one of their own sanctions. `TEOSReports` submits player behavior
+reports directly to EOS.
+
+Reporting is an externally visible moderation action. Present the category and
+message to the player for confirmation before calling
+`SendPlayerBehaviorReport`; do not use it as an automatic telemetry or testing
+endpoint. The supplied `moderation.bmx` diagnostic deliberately queries only
+the signed-in user's sanctions and never submits a report.
+
+The EOS client policy must permit the corresponding Sanctions or Reports action.
+Report context is optional, but when supplied it must be valid JSON and no more
+than `EOS_REPORTS_REPORTCONTEXT_MAX_LENGTH` characters.
+
 ## Features and examples
 
 | Area | Module support | Example or test |
@@ -219,6 +236,8 @@ future `PersistentAuth` login.
 | P2P | packets, connection notifications, NAT and relay settings, queue controls | [`p2p_diagnostics.bmx`](sdk.mod/examples/p2p_diagnostics.bmx) and [`eos_p2p_test.bmx`](tools/eos_p2p_test.bmx) |
 | Title Storage | metadata queries, streamed downloads, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 | Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
+| Sanctions | active-sanction queries, cached copies, player appeals | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
+| Reports | explicitly submitted player behavior reports with optional JSON context | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
 
 The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app remains
 the best first portal and permission test. The smaller
@@ -296,5 +315,5 @@ confirmed session loss as an authentication failure.
 
 ## Roadmap
 
-The next broad area is RTC. Ecom, sanctions/reports, anti-cheat, mods, KWS, and
-other specialised EOS services can be added as application needs justify them.
+Potential future areas include Ecom, EOS Sessions, RTC, anti-cheat, mods, KWS,
+and other specialised EOS services as application needs justify them.

@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.19.0"
+ModuleInfo "Version: 0.20.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -54,6 +54,8 @@ ModuleInfo "History: 0.18.0"
 ModuleInfo "History: Added streaming Title Storage and Player Data Storage APIs."
 ModuleInfo "History: 0.19.0"
 ModuleInfo "History: Added managed Auth-to-Connect sessions, refresh, retry, and persistent sign-out."
+ModuleInfo "History: 0.20.0"
+ModuleInfo "History: Added player sanctions queries, appeals, and behavior reports."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -79,6 +81,7 @@ Import "SDK/Include/*.h"
 Import BRL.Stream
 Import "glue/glue.cpp"
 Import "glue/storage_glue.cpp"
+Import "glue/sanctions_reports_glue.cpp"
 
 Const EOS_EPIC_ACCOUNT_ID_MAX_LENGTH:Int = 32
 Const EOS_PRODUCT_USER_ID_MAX_LENGTH:Int = 32
@@ -1279,6 +1282,26 @@ Type TEOSPlatform
 	Method PlayerDataStorage:TEOSPlayerDataStorage()
 		If Not _handle Then Return Null
 		Return TEOSPlayerDataStorage._Create(Self, bmx_eos_platform_get_player_storage_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS player-sanctions interface.
+	End Rem
+	Method Sanctions:TEOSSanctions()
+		If Not _handle Then
+			Return Null
+		End If
+		Return TEOSSanctions._Create(Self, bmx_eos_platform_get_sanctions_interface(_handle))
+	End Method
+
+	Rem
+	bbdoc: Returns the EOS player behavior reports interface.
+	End Rem
+	Method Reports:TEOSReports()
+		If Not _handle Then
+			Return Null
+		End If
+		Return TEOSReports._Create(Self, bmx_eos_platform_get_reports_interface(_handle))
 	End Method
 
 	Rem
@@ -4772,6 +4795,8 @@ Extern
 	Function bmx_eos_platform_get_p2p_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_title_storage_interface:Byte Ptr(handle:Byte Ptr)
 	Function bmx_eos_platform_get_player_storage_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_sanctions_interface:Byte Ptr(handle:Byte Ptr)
+	Function bmx_eos_platform_get_reports_interface:Byte Ptr(handle:Byte Ptr)
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
@@ -4930,4 +4955,5 @@ End Extern
 
 Public
 Include "storage.bmx"
+Include "sanctions_reports.bmx"
 Include "session.bmx"
