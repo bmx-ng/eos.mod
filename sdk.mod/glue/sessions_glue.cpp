@@ -19,6 +19,21 @@ void eos_sdk_TEOSSessionSearchRequest__Complete(BBObject *, EOS_EResult);
 void eos_sdk_TEOSSessionSearchRequest__Cancel(BBObject *);
 void eos_sdk_TEOSSessionPlayersRequest__Complete(BBObject *, EOS_EResult, int, int);
 void eos_sdk_TEOSSessionPlayersRequest__Cancel(BBObject *);
+void eos_sdk_TEOSSessionInviteReceivedSubscription__Notify(
+	BBObject *, BBString *, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSSessionInviteReceivedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSSessionInviteAcceptedSubscription__Notify(
+	BBObject *, BBString *, BBString *, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSSessionInviteAcceptedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSSessionInviteRejectedSubscription__Notify(
+	BBObject *, BBString *, BBString *, EOS_ProductUserId, EOS_ProductUserId);
+void eos_sdk_TEOSSessionInviteRejectedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSJoinSessionAcceptedSubscription__Notify(
+	BBObject *, EOS_ProductUserId, uint64_t);
+void eos_sdk_TEOSJoinSessionAcceptedSubscription__Cancel(BBObject *);
+void eos_sdk_TEOSLeaveSessionRequestedSubscription__Notify(
+	BBObject *, EOS_ProductUserId, BBString *);
+void eos_sdk_TEOSLeaveSessionRequestedSubscription__Cancel(BBObject *);
 }
 
 namespace {
@@ -108,6 +123,69 @@ struct RequestContext {
 
 std::vector<RequestContext *> g_requests;
 
+enum class NotificationKind {
+	InviteReceived,
+	InviteAccepted,
+	InviteRejected,
+	JoinAccepted,
+	LeaveRequested
+};
+
+struct NotificationContext {
+	EOS_HPlatform platform;
+	EOS_HSessions sessions;
+	EOS_NotificationId id;
+	NotificationKind kind;
+	BBObject *subscription;
+
+	NotificationContext(
+		EOS_HPlatform platformValue,
+		EOS_HSessions sessionsValue,
+		NotificationKind kindValue,
+		BBObject *subscriptionValue)
+		: platform(platformValue), sessions(sessionsValue),
+		  id(EOS_INVALID_NOTIFICATIONID), kind(kindValue),
+		  subscription(subscriptionValue) {
+		BBRETAIN(subscription);
+	}
+
+	~NotificationContext() {
+		BBRELEASE(subscription);
+	}
+};
+
+std::vector<NotificationContext *> g_notifications;
+
+void RemoveNotification(NotificationContext *context) {
+	if (!context) {
+		return;
+	}
+	if (context->id != EOS_INVALID_NOTIFICATIONID) {
+		switch (context->kind) {
+		case NotificationKind::InviteReceived:
+			EOS_Sessions_RemoveNotifySessionInviteReceived(context->sessions, context->id);
+			break;
+		case NotificationKind::InviteAccepted:
+			EOS_Sessions_RemoveNotifySessionInviteAccepted(context->sessions, context->id);
+			break;
+		case NotificationKind::InviteRejected:
+			EOS_Sessions_RemoveNotifySessionInviteRejected(context->sessions, context->id);
+			break;
+		case NotificationKind::JoinAccepted:
+			EOS_Sessions_RemoveNotifyJoinSessionAccepted(context->sessions, context->id);
+			break;
+		case NotificationKind::LeaveRequested:
+			EOS_Sessions_RemoveNotifyLeaveSessionRequested(context->sessions, context->id);
+			break;
+		}
+	}
+	auto found = std::find(g_notifications.begin(), g_notifications.end(), context);
+	if (found != g_notifications.end()) {
+		g_notifications.erase(found);
+	}
+	delete context;
+}
+
 RequestContext *CreateRequest(
 	EOS_HPlatform platform, BBObject *request, RequestKind kind) {
 	auto *context = new RequestContext(platform, request, kind);
@@ -169,6 +247,18 @@ void EOS_CALL EndComplete(const EOS_Sessions_EndSessionCallbackInfo *data) {
 	CompleteOperation(data);
 }
 
+void EOS_CALL SendInviteComplete(const EOS_Sessions_SendInviteCallbackInfo *data) {
+	CompleteOperation(data);
+}
+
+void EOS_CALL RejectInviteComplete(const EOS_Sessions_RejectInviteCallbackInfo *data) {
+	CompleteOperation(data);
+}
+
+void EOS_CALL QueryInvitesComplete(const EOS_Sessions_QueryInvitesCallbackInfo *data) {
+	CompleteOperation(data);
+}
+
 void EOS_CALL SearchComplete(const EOS_SessionSearch_FindCallbackInfo *data) {
 	if (!data || !data->ClientData) {
 		return;
@@ -208,6 +298,59 @@ void EOS_CALL UnregisterComplete(const EOS_Sessions_UnregisterPlayersCallbackInf
 	if (terminal) {
 		delete context;
 	}
+}
+
+void EOS_CALL InviteReceived(
+	const EOS_Sessions_SessionInviteReceivedCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<NotificationContext *>(data->ClientData);
+	eos_sdk_TEOSSessionInviteReceivedSubscription__Notify(
+		context->subscription, ToBBString(data->InviteId),
+		data->LocalUserId, data->TargetUserId);
+}
+
+void EOS_CALL InviteAccepted(
+	const EOS_Sessions_SessionInviteAcceptedCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<NotificationContext *>(data->ClientData);
+	eos_sdk_TEOSSessionInviteAcceptedSubscription__Notify(
+		context->subscription, ToBBString(data->SessionId), ToBBString(data->InviteId),
+		data->LocalUserId, data->TargetUserId);
+}
+
+void EOS_CALL InviteRejected(
+	const EOS_Sessions_SessionInviteRejectedCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<NotificationContext *>(data->ClientData);
+	eos_sdk_TEOSSessionInviteRejectedSubscription__Notify(
+		context->subscription, ToBBString(data->SessionId), ToBBString(data->InviteId),
+		data->LocalUserId, data->TargetUserId);
+}
+
+void EOS_CALL JoinAccepted(
+	const EOS_Sessions_JoinSessionAcceptedCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<NotificationContext *>(data->ClientData);
+	eos_sdk_TEOSJoinSessionAcceptedSubscription__Notify(
+		context->subscription, data->LocalUserId, data->UiEventId);
+}
+
+void EOS_CALL LeaveRequested(
+	const EOS_Sessions_LeaveSessionRequestedCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<NotificationContext *>(data->ClientData);
+	eos_sdk_TEOSLeaveSessionRequestedSubscription__Notify(
+		context->subscription, data->LocalUserId, ToBBString(data->SessionName));
 }
 
 void FillAttribute(
@@ -510,6 +653,181 @@ void bmx_eos_sessions_change_players(
 	delete context;
 }
 
+void bmx_eos_sessions_send_invite(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *request,
+	BBString *maxSessionName, EOS_ProductUserId localUser,
+	EOS_ProductUserId targetUser) {
+	UTF8String sessionName(maxSessionName);
+	EOS_Sessions_SendInviteOptions options{};
+	options.ApiVersion = EOS_SESSIONS_SENDINVITE_API_LATEST;
+	options.SessionName = sessionName.required();
+	options.LocalUserId = localUser;
+	options.TargetUserId = targetUser;
+	auto *context = CreateRequest(platform, request, RequestKind::Operation);
+	EOS_Sessions_SendInvite(sessions, &options, context, SendInviteComplete);
+}
+
+void bmx_eos_sessions_reject_invite(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *request,
+	BBString *maxInviteId, EOS_ProductUserId localUser) {
+	UTF8String inviteId(maxInviteId);
+	EOS_Sessions_RejectInviteOptions options{};
+	options.ApiVersion = EOS_SESSIONS_REJECTINVITE_API_LATEST;
+	options.LocalUserId = localUser;
+	options.InviteId = inviteId.required();
+	auto *context = CreateRequest(platform, request, RequestKind::Operation);
+	EOS_Sessions_RejectInvite(sessions, &options, context, RejectInviteComplete);
+}
+
+void bmx_eos_sessions_query_invites(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *request,
+	EOS_ProductUserId localUser) {
+	EOS_Sessions_QueryInvitesOptions options{};
+	options.ApiVersion = EOS_SESSIONS_QUERYINVITES_API_LATEST;
+	options.LocalUserId = localUser;
+	auto *context = CreateRequest(platform, request, RequestKind::Operation);
+	EOS_Sessions_QueryInvites(sessions, &options, context, QueryInvitesComplete);
+}
+
+uint32_t bmx_eos_sessions_invite_count(
+	EOS_HSessions sessions, EOS_ProductUserId localUser) {
+	EOS_Sessions_GetInviteCountOptions options{};
+	options.ApiVersion = EOS_SESSIONS_GETINVITECOUNT_API_LATEST;
+	options.LocalUserId = localUser;
+	return EOS_Sessions_GetInviteCount(sessions, &options);
+}
+
+EOS_EResult bmx_eos_sessions_invite_id(
+	EOS_HSessions sessions, EOS_ProductUserId localUser,
+	uint32_t index, BBString **inviteId) {
+	EOS_Sessions_GetInviteIdByIndexOptions options{};
+	options.ApiVersion = EOS_SESSIONS_GETINVITEIDBYINDEX_API_LATEST;
+	options.LocalUserId = localUser;
+	options.Index = index;
+	char buffer[EOS_SESSIONS_INVITEID_MAX_LENGTH + 1]{};
+	int32_t length = static_cast<int32_t>(sizeof(buffer));
+	const EOS_EResult result = EOS_Sessions_GetInviteIdByIndex(
+		sessions, &options, buffer, &length);
+	if (result == EOS_EResult::EOS_Success) {
+		*inviteId = ToBBString(buffer);
+	}
+	return result;
+}
+
+EOS_EResult bmx_eos_sessions_copy_details_by_invite(
+	EOS_HSessions sessions, BBString *maxInviteId, EOS_HSessionDetails *details) {
+	UTF8String inviteId(maxInviteId);
+	EOS_Sessions_CopySessionHandleByInviteIdOptions options{};
+	options.ApiVersion = EOS_SESSIONS_COPYSESSIONHANDLEBYINVITEID_API_LATEST;
+	options.InviteId = inviteId.required();
+	return EOS_Sessions_CopySessionHandleByInviteId(sessions, &options, details);
+}
+
+EOS_EResult bmx_eos_sessions_copy_details_by_ui_event(
+	EOS_HSessions sessions, uint64_t uiEventId, EOS_HSessionDetails *details) {
+	EOS_Sessions_CopySessionHandleByUiEventIdOptions options{};
+	options.ApiVersion = EOS_SESSIONS_COPYSESSIONHANDLEBYUIEVENTID_API_LATEST;
+	options.UiEventId = uiEventId;
+	return EOS_Sessions_CopySessionHandleByUiEventId(sessions, &options, details);
+}
+
+EOS_EResult bmx_eos_sessions_copy_details_for_presence(
+	EOS_HSessions sessions, EOS_ProductUserId localUser, EOS_HSessionDetails *details) {
+	EOS_Sessions_CopySessionHandleForPresenceOptions options{};
+	options.ApiVersion = EOS_SESSIONS_COPYSESSIONHANDLEFORPRESENCE_API_LATEST;
+	options.LocalUserId = localUser;
+	return EOS_Sessions_CopySessionHandleForPresence(sessions, &options, details);
+}
+
+uint64_t bmx_eos_sessions_add_notify_invite_received(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *subscription) {
+	EOS_Sessions_AddNotifySessionInviteReceivedOptions options{};
+	options.ApiVersion = EOS_SESSIONS_ADDNOTIFYSESSIONINVITERECEIVED_API_LATEST;
+	auto *context = new NotificationContext(
+		platform, sessions, NotificationKind::InviteReceived, subscription);
+	context->id = EOS_Sessions_AddNotifySessionInviteReceived(
+		sessions, &options, context, InviteReceived);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return 0;
+	}
+	g_notifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_sessions_add_notify_invite_accepted(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *subscription) {
+	EOS_Sessions_AddNotifySessionInviteAcceptedOptions options{};
+	options.ApiVersion = EOS_SESSIONS_ADDNOTIFYSESSIONINVITEACCEPTED_API_LATEST;
+	auto *context = new NotificationContext(
+		platform, sessions, NotificationKind::InviteAccepted, subscription);
+	context->id = EOS_Sessions_AddNotifySessionInviteAccepted(
+		sessions, &options, context, InviteAccepted);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return 0;
+	}
+	g_notifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_sessions_add_notify_invite_rejected(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *subscription) {
+	EOS_Sessions_AddNotifySessionInviteRejectedOptions options{};
+	options.ApiVersion = EOS_SESSIONS_ADDNOTIFYSESSIONINVITEREJECTED_API_LATEST;
+	auto *context = new NotificationContext(
+		platform, sessions, NotificationKind::InviteRejected, subscription);
+	context->id = EOS_Sessions_AddNotifySessionInviteRejected(
+		sessions, &options, context, InviteRejected);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return 0;
+	}
+	g_notifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_sessions_add_notify_join_accepted(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *subscription) {
+	EOS_Sessions_AddNotifyJoinSessionAcceptedOptions options{};
+	options.ApiVersion = EOS_SESSIONS_ADDNOTIFYJOINSESSIONACCEPTED_API_LATEST;
+	auto *context = new NotificationContext(
+		platform, sessions, NotificationKind::JoinAccepted, subscription);
+	context->id = EOS_Sessions_AddNotifyJoinSessionAccepted(
+		sessions, &options, context, JoinAccepted);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return 0;
+	}
+	g_notifications.push_back(context);
+	return context->id;
+}
+
+uint64_t bmx_eos_sessions_add_notify_leave_requested(
+	EOS_HPlatform platform, EOS_HSessions sessions, BBObject *subscription) {
+	EOS_Sessions_AddNotifyLeaveSessionRequestedOptions options{};
+	options.ApiVersion = EOS_SESSIONS_ADDNOTIFYLEAVESESSIONREQUESTED_API_LATEST;
+	auto *context = new NotificationContext(
+		platform, sessions, NotificationKind::LeaveRequested, subscription);
+	context->id = EOS_Sessions_AddNotifyLeaveSessionRequested(
+		sessions, &options, context, LeaveRequested);
+	if (context->id == EOS_INVALID_NOTIFICATIONID) {
+		delete context;
+		return 0;
+	}
+	g_notifications.push_back(context);
+	return context->id;
+}
+
+void bmx_eos_sessions_remove_notify(uint64_t id) {
+	auto found = std::find_if(
+		g_notifications.begin(), g_notifications.end(),
+		[id](const NotificationContext *context) { return context->id == id; });
+	if (found != g_notifications.end()) {
+		RemoveNotification(*found);
+	}
+}
+
 EOS_EResult bmx_eos_sessions_create_search(
 	EOS_HSessions sessions, uint32_t maxResults, EOS_HSessionSearch *search) {
 	EOS_Sessions_CreateSessionSearchOptions options{};
@@ -790,6 +1108,40 @@ void bmx_eos_sessions_cancel_platform_requests(EOS_HPlatform platform) {
 		case RequestKind::Players:
 			eos_sdk_TEOSSessionPlayersRequest__Cancel(context->request);
 			break;
+		}
+		delete context;
+	}
+	for (std::size_t index = 0; index < g_notifications.size();) {
+		auto *context = g_notifications[index];
+		if (context->platform != platform) {
+			++index;
+			continue;
+		}
+		g_notifications.erase(
+			g_notifications.begin() + static_cast<std::ptrdiff_t>(index));
+		if (context->id != EOS_INVALID_NOTIFICATIONID) {
+			switch (context->kind) {
+			case NotificationKind::InviteReceived:
+				EOS_Sessions_RemoveNotifySessionInviteReceived(context->sessions, context->id);
+				eos_sdk_TEOSSessionInviteReceivedSubscription__Cancel(context->subscription);
+				break;
+			case NotificationKind::InviteAccepted:
+				EOS_Sessions_RemoveNotifySessionInviteAccepted(context->sessions, context->id);
+				eos_sdk_TEOSSessionInviteAcceptedSubscription__Cancel(context->subscription);
+				break;
+			case NotificationKind::InviteRejected:
+				EOS_Sessions_RemoveNotifySessionInviteRejected(context->sessions, context->id);
+				eos_sdk_TEOSSessionInviteRejectedSubscription__Cancel(context->subscription);
+				break;
+			case NotificationKind::JoinAccepted:
+				EOS_Sessions_RemoveNotifyJoinSessionAccepted(context->sessions, context->id);
+				eos_sdk_TEOSJoinSessionAcceptedSubscription__Cancel(context->subscription);
+				break;
+			case NotificationKind::LeaveRequested:
+				EOS_Sessions_RemoveNotifyLeaveSessionRequested(context->sessions, context->id);
+				eos_sdk_TEOSLeaveSessionRequestedSubscription__Cancel(context->subscription);
+				break;
+			}
 		}
 		delete context;
 	}

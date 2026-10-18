@@ -123,3 +123,34 @@ between windows.
 On macOS the login UI did not progress from a console executable during local
 testing. Build Auth clients as `.app` GUI bundles with an active application
 event loop; a Max2D window is sufficient and MaxGUI is not required.
+
+## Two-account Sessions test app
+
+`eos_sessions_test.bmx` is a Max2D integration test for the complete two-user
+Sessions flow. It publishes a public session for the first account, sends an
+invitation to the second account, queries and resolves the invite cache, joins,
+registers and unregisters the second player, then destroys both local session
+views. It also registers the invite-received notification used by separate
+game clients.
+
+Build it as a GUI application:
+
+```sh
+bmk makeapp -r -t gui -o tools/eos_sessions_test tools/eos_sessions_test.bmx
+```
+
+On macOS, copy `sdk.mod/SDK/Bin/libEOSSDK-Mac-Shipping.dylib` into
+`eos_sessions_test.app/Contents/MacOS`. Keep the Developer Authentication Tool
+open with two different accounts. As with the P2P test, use
+`DEV_AUTH_CREDENTIAL` and `DEV_AUTH_CREDENTIAL_2`, or pass the second credential
+as the second application argument:
+
+```sh
+open tools/eos_sessions_test.app --args sdk.mod/examples/eos.local.conf second-credential-name
+```
+
+The EOS client policy must allow Sessions. With two users logged into one EOS
+platform instance, EOS may update the invite cache without emitting the
+invite-received notification. The test waits briefly for that notification and
+then queries the authoritative invite cache, matching the recovery path a game
+should use after reconnecting or returning to the foreground.

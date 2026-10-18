@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.21.0"
+ModuleInfo "Version: 0.22.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -58,6 +58,8 @@ ModuleInfo "History: 0.20.0"
 ModuleInfo "History: Added player sanctions queries, appeals, and behavior reports."
 ModuleInfo "History: 0.21.0"
 ModuleInfo "History: Added searchable game-session creation, joining, lifecycle, and membership."
+ModuleInfo "History: 0.22.0"
+ModuleInfo "History: Added session invitations, invite caches, overlay events, and leave requests."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"

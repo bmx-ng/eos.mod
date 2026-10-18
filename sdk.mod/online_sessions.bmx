@@ -46,6 +46,9 @@ Enum EEOSSessionOperation
 	EndSession
 	RegisterPlayers
 	UnregisterPlayers
+	SendInvite
+	RejectInvite
+	QueryInvites
 End Enum
 
 Type TEOSSessionCreateOptions
@@ -114,6 +117,26 @@ End Interface
 
 Interface IEOSSessionPlayersListener
 	Method OnEOSSessionPlayersChanged(result:EEOSResult, operation:EEOSSessionOperation, changedCount:Int, sanctionedCount:Int)
+End Interface
+
+Interface IEOSSessionInviteReceivedListener
+	Method OnEOSSessionInviteReceived(inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSSessionInviteAcceptedListener
+	Method OnEOSSessionInviteAccepted(sessionId:String, inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSSessionInviteRejectedListener
+	Method OnEOSSessionInviteRejected(sessionId:String, inviteId:String, localUserId:TEOSProductUserId, senderUserId:TEOSProductUserId)
+End Interface
+
+Interface IEOSJoinSessionAcceptedListener
+	Method OnEOSJoinSessionAccepted(localUserId:TEOSProductUserId, uiEventId:ULong)
+End Interface
+
+Interface IEOSLeaveSessionRequestedListener
+	Method OnEOSLeaveSessionRequested(localUserId:TEOSProductUserId, sessionName:String)
 End Interface
 
 Type TEOSSessionUpdateRequest
@@ -280,6 +303,273 @@ Type TEOSSessionPlayersRequest
 	End Method
 End Type
 
+Type TEOSSessionInviteReceivedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSSessionInviteReceivedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSSessionInviteReceivedSubscription(owner:TEOSPlatform, listener:IEOSSessionInviteReceivedListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteReceivedSubscription = New TEOSSessionInviteReceivedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSSessionInviteReceivedSubscription, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSSessionInviteReceived( ..
+				inviteId, TEOSProductUserId._Create(localHandle), TEOSProductUserId._Create(senderHandle))
+		End If
+	End Function
+
+	Function _Cancel(subscription:TEOSSessionInviteReceivedSubscription) { nomangle }
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_sessions_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSSessionInviteAcceptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSSessionInviteAcceptedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSSessionInviteAcceptedSubscription(owner:TEOSPlatform, listener:IEOSSessionInviteAcceptedListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteAcceptedSubscription = New TEOSSessionInviteAcceptedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSSessionInviteAcceptedSubscription, sessionId:String, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSSessionInviteAccepted( ..
+				sessionId, inviteId, TEOSProductUserId._Create(localHandle), ..
+				TEOSProductUserId._Create(senderHandle))
+		End If
+	End Function
+
+	Function _Cancel(subscription:TEOSSessionInviteAcceptedSubscription) { nomangle }
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_sessions_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSSessionInviteRejectedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSSessionInviteRejectedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSSessionInviteRejectedSubscription(owner:TEOSPlatform, listener:IEOSSessionInviteRejectedListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteRejectedSubscription = New TEOSSessionInviteRejectedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSSessionInviteRejectedSubscription, sessionId:String, inviteId:String, localHandle:Byte Ptr, senderHandle:Byte Ptr) { nomangle }
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSSessionInviteRejected( ..
+				sessionId, inviteId, TEOSProductUserId._Create(localHandle), ..
+				TEOSProductUserId._Create(senderHandle))
+		End If
+	End Function
+
+	Function _Cancel(subscription:TEOSSessionInviteRejectedSubscription) { nomangle }
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_sessions_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSJoinSessionAcceptedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSJoinSessionAcceptedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSJoinSessionAcceptedSubscription(owner:TEOSPlatform, listener:IEOSJoinSessionAcceptedListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSJoinSessionAcceptedSubscription = New TEOSJoinSessionAcceptedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSJoinSessionAcceptedSubscription, localHandle:Byte Ptr, uiEventId:ULong) { nomangle }
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSJoinSessionAccepted( ..
+				TEOSProductUserId._Create(localHandle), uiEventId)
+		End If
+	End Function
+
+	Function _Cancel(subscription:TEOSJoinSessionAcceptedSubscription) { nomangle }
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_sessions_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
+Type TEOSLeaveSessionRequestedSubscription
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSLeaveSessionRequestedListener
+	Field _id:ULong
+
+	Public
+	Function _Create:TEOSLeaveSessionRequestedSubscription(owner:TEOSPlatform, listener:IEOSLeaveSessionRequestedListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSLeaveSessionRequestedSubscription = New TEOSLeaveSessionRequestedSubscription
+		subscription._owner = owner
+		subscription._listener = listener
+		Return subscription
+	End Function
+
+	Function _Notify(subscription:TEOSLeaveSessionRequestedSubscription, localHandle:Byte Ptr, sessionName:String) { nomangle }
+		If subscription And subscription._listener Then
+			subscription._listener.OnEOSLeaveSessionRequested( ..
+				TEOSProductUserId._Create(localHandle), sessionName)
+		End If
+	End Function
+
+	Function _Cancel(subscription:TEOSLeaveSessionRequestedSubscription) { nomangle }
+		If subscription Then
+			subscription._id = 0
+			subscription._listener = Null
+		End If
+	End Function
+
+	Method _SetId(id:ULong)
+		_id = id
+	End Method
+
+	Method Remove()
+		If _id Then
+			Local id:ULong = _id
+			_id = 0
+			_listener = Null
+			bmx_eos_sessions_remove_notify(id)
+		End If
+	End Method
+
+	Method IsActive:Int()
+		Return _id <> 0 And _owner And _owner.IsValid()
+	End Method
+
+	Method Delete()
+		Remove()
+	End Method
+End Type
+
 Rem
 bbdoc: Creates, advertises, finds, joins, and manages EOS game sessions.
 about: Sessions describe a match or server. They do not carry gameplay data;
@@ -382,6 +672,175 @@ Type TEOSSessions
 
 	Method UnregisterPlayers:TEOSSessionPlayersRequest(sessionName:String, players:TEOSProductUserId[], listener:IEOSSessionPlayersListener)
 		Return _ChangePlayers(sessionName, players, listener, EEOSSessionOperation.UnregisterPlayers)
+	End Method
+
+	Method SendInvite:TEOSSessionOperationRequest(sessionName:String, localUserId:TEOSProductUserId, targetUserId:TEOSProductUserId, listener:IEOSSessionOperationListener)
+		If Not _Valid() Or Not sessionName Or Not listener Then
+			Return Null
+		End If
+		If Not localUserId Or Not localUserId.IsValid() Then
+			Return Null
+		End If
+		If Not targetUserId Or Not targetUserId.IsValid() Then
+			Return Null
+		End If
+		Local request:TEOSSessionOperationRequest = TEOSSessionOperationRequest._Create( ..
+			_owner, listener, EEOSSessionOperation.SendInvite)
+		bmx_eos_sessions_send_invite( ..
+			_owner._NativeHandle(), _handle, request, sessionName, ..
+			localUserId._NativeHandle(), targetUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method RejectInvite:TEOSSessionOperationRequest(inviteId:String, localUserId:TEOSProductUserId, listener:IEOSSessionOperationListener)
+		If Not _Valid() Or Not inviteId Or Not listener Then
+			Return Null
+		End If
+		If Not localUserId Or Not localUserId.IsValid() Then
+			Return Null
+		End If
+		Local request:TEOSSessionOperationRequest = TEOSSessionOperationRequest._Create( ..
+			_owner, listener, EEOSSessionOperation.RejectInvite)
+		bmx_eos_sessions_reject_invite( ..
+			_owner._NativeHandle(), _handle, request, inviteId, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method QueryInvites:TEOSSessionOperationRequest(localUserId:TEOSProductUserId, listener:IEOSSessionOperationListener)
+		If Not _Valid() Or Not listener Or Not localUserId Or Not localUserId.IsValid() Then
+			Return Null
+		End If
+		Local request:TEOSSessionOperationRequest = TEOSSessionOperationRequest._Create( ..
+			_owner, listener, EEOSSessionOperation.QueryInvites)
+		bmx_eos_sessions_query_invites( ..
+			_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Method InviteCount:UInt(localUserId:TEOSProductUserId)
+		If Not _Valid() Or Not localUserId Or Not localUserId.IsValid() Then
+			Return 0
+		End If
+		Return bmx_eos_sessions_invite_count(_handle, localUserId._NativeHandle())
+	End Method
+
+	Method GetInviteIdByIndex:EEOSResult(localUserId:TEOSProductUserId, index:UInt, inviteId:String Var)
+		inviteId = ""
+		If Not _Valid() Or Not localUserId Or Not localUserId.IsValid() Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Return bmx_eos_sessions_invite_id( ..
+			_handle, localUserId._NativeHandle(), index, inviteId)
+	End Method
+
+	Method CopySessionDetailsByInviteId:EEOSResult(inviteId:String, details:TEOSSessionDetails Var)
+		details = Null
+		If Not _Valid() Or Not inviteId Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_sessions_copy_details_by_invite(_handle, inviteId, handle)
+		If result = EEOSResult.Success Then
+			details = TEOSSessionDetails._Create(_owner, handle)
+		End If
+		Return result
+	End Method
+
+	Method CopySessionDetailsByUiEventId:EEOSResult(uiEventId:ULong, details:TEOSSessionDetails Var)
+		details = Null
+		If Not _Valid() Or uiEventId = 0 Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_sessions_copy_details_by_ui_event(_handle, uiEventId, handle)
+		If result = EEOSResult.Success Then
+			details = TEOSSessionDetails._Create(_owner, handle)
+		End If
+		Return result
+	End Method
+
+	Method CopySessionDetailsForPresence:EEOSResult(localUserId:TEOSProductUserId, details:TEOSSessionDetails Var)
+		details = Null
+		If Not _Valid() Or Not localUserId Or Not localUserId.IsValid() Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Local handle:Byte Ptr
+		Local result:EEOSResult = bmx_eos_sessions_copy_details_for_presence( ..
+			_handle, localUserId._NativeHandle(), handle)
+		If result = EEOSResult.Success Then
+			details = TEOSSessionDetails._Create(_owner, handle)
+		End If
+		Return result
+	End Method
+
+	Method AddNotifyInviteReceived:TEOSSessionInviteReceivedSubscription(listener:IEOSSessionInviteReceivedListener)
+		If Not _Valid() Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteReceivedSubscription = ..
+			TEOSSessionInviteReceivedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_sessions_add_notify_invite_received( ..
+			_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then
+			Return Null
+		End If
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteAccepted:TEOSSessionInviteAcceptedSubscription(listener:IEOSSessionInviteAcceptedListener)
+		If Not _Valid() Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteAcceptedSubscription = ..
+			TEOSSessionInviteAcceptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_sessions_add_notify_invite_accepted( ..
+			_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then
+			Return Null
+		End If
+		Return subscription
+	End Method
+
+	Method AddNotifyInviteRejected:TEOSSessionInviteRejectedSubscription(listener:IEOSSessionInviteRejectedListener)
+		If Not _Valid() Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSSessionInviteRejectedSubscription = ..
+			TEOSSessionInviteRejectedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_sessions_add_notify_invite_rejected( ..
+			_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then
+			Return Null
+		End If
+		Return subscription
+	End Method
+
+	Method AddNotifyJoinAccepted:TEOSJoinSessionAcceptedSubscription(listener:IEOSJoinSessionAcceptedListener)
+		If Not _Valid() Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSJoinSessionAcceptedSubscription = ..
+			TEOSJoinSessionAcceptedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_sessions_add_notify_join_accepted( ..
+			_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then
+			Return Null
+		End If
+		Return subscription
+	End Method
+
+	Method AddNotifyLeaveRequested:TEOSLeaveSessionRequestedSubscription(listener:IEOSLeaveSessionRequestedListener)
+		If Not _Valid() Or Not listener Then
+			Return Null
+		End If
+		Local subscription:TEOSLeaveSessionRequestedSubscription = ..
+			TEOSLeaveSessionRequestedSubscription._Create(_owner, listener)
+		subscription._SetId(bmx_eos_sessions_add_notify_leave_requested( ..
+			_owner._NativeHandle(), _handle, subscription))
+		If Not subscription.IsActive() Then
+			Return Null
+		End If
+		Return subscription
 	End Method
 
 	Method CreateSearch:EEOSResult(maxResults:UInt, search:TEOSSessionSearch Var)
@@ -805,6 +1264,20 @@ Extern
 	Function bmx_eos_sessions_named_operation(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionOperationRequest, sessionName:String, operation:EEOSSessionOperation)
 	Function bmx_eos_sessions_join(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionOperationRequest, sessionName:String, detailsHandle:Byte Ptr, localUserHandle:Byte Ptr, presenceEnabled:Int)
 	Function bmx_eos_sessions_change_players(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionPlayersRequest, sessionName:String, playerHandles:Byte Ptr[], operation:EEOSSessionOperation)
+	Function bmx_eos_sessions_send_invite(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionOperationRequest, sessionName:String, localUserHandle:Byte Ptr, targetUserHandle:Byte Ptr)
+	Function bmx_eos_sessions_reject_invite(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionOperationRequest, inviteId:String, localUserHandle:Byte Ptr)
+	Function bmx_eos_sessions_query_invites(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, request:TEOSSessionOperationRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_sessions_invite_count:UInt(sessionsHandle:Byte Ptr, localUserHandle:Byte Ptr)
+	Function bmx_eos_sessions_invite_id:EEOSResult(sessionsHandle:Byte Ptr, localUserHandle:Byte Ptr, index:UInt, inviteId:String Var)
+	Function bmx_eos_sessions_copy_details_by_invite:EEOSResult(sessionsHandle:Byte Ptr, inviteId:String, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_sessions_copy_details_by_ui_event:EEOSResult(sessionsHandle:Byte Ptr, uiEventId:ULong, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_sessions_copy_details_for_presence:EEOSResult(sessionsHandle:Byte Ptr, localUserHandle:Byte Ptr, detailsHandle:Byte Ptr Var)
+	Function bmx_eos_sessions_add_notify_invite_received:ULong(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, subscription:TEOSSessionInviteReceivedSubscription)
+	Function bmx_eos_sessions_add_notify_invite_accepted:ULong(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, subscription:TEOSSessionInviteAcceptedSubscription)
+	Function bmx_eos_sessions_add_notify_invite_rejected:ULong(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, subscription:TEOSSessionInviteRejectedSubscription)
+	Function bmx_eos_sessions_add_notify_join_accepted:ULong(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, subscription:TEOSJoinSessionAcceptedSubscription)
+	Function bmx_eos_sessions_add_notify_leave_requested:ULong(platformHandle:Byte Ptr, sessionsHandle:Byte Ptr, subscription:TEOSLeaveSessionRequestedSubscription)
+	Function bmx_eos_sessions_remove_notify(id:ULong)
 	Function bmx_eos_sessions_create_search:EEOSResult(sessionsHandle:Byte Ptr, maxResults:UInt, searchHandle:Byte Ptr Var)
 	Function bmx_eos_session_search_release(searchHandle:Byte Ptr)
 	Function bmx_eos_session_search_set_string:EEOSResult(searchHandle:Byte Ptr, field:Int, value:String)
