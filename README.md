@@ -256,6 +256,25 @@ Applications should treat `QueryInvites` and the resulting cache as
 authoritative rather than
 depending on notification delivery.
 
+### EOS UI and Social Overlay
+
+`TEOSPlatform.UI()` provides the EOS UI interface. It can show and hide the
+Friends overlay, report its visible and exclusive-input state, set the corner
+used for EOS notifications, pause overlay display, open the player report or
+block dialogs, and acknowledge UI event IDs received from other EOS services.
+Keep the display-settings subscription alive while the game needs the events,
+and suspend gameplay input whenever EOS reports exclusive input.
+
+Epic currently supports the Social Overlay on Windows x64, but not on macOS,
+Linux, Linux ARM64, or Windows ARM64. Games on those targets should provide
+their own social UI using the Friends, Presence, Lobbies, and Sessions APIs.
+The UI interface can still be obtained on an unsupported target, so use the
+result from `EOSSocialOverlaySupportedOnPlatform()` rather than a non-null
+handle as proof that the overlay can open. On Windows, install and redistribute
+Epic's Social Overlay components as required by the EOS SDK. See Epic's
+[Social Overlay integration guide](https://dev.epicgames.com/docs/epic-online-services/accounts-and-social/social-overlay/sdk-integration?lang=en-US)
+for the current platform requirements.
+
 ## Features and examples
 
 | Area | Module support | Example or test |
@@ -275,6 +294,7 @@ depending on notification delivery.
 | Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 | Sanctions | active-sanction queries, cached copies, player appeals | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
 | Reports | explicitly submitted player behavior reports with optional JSON context | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
+| EOS UI | Social Overlay visibility, input ownership, placement, pause, report/block dialogs, and event acknowledgement | [`ui.bmx`](sdk.mod/examples/ui.bmx) and [`online_ui.bmx`](sdk.mod/tests/online_ui.bmx) |
 
 The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app remains
 the best first portal and permission test. The smaller
