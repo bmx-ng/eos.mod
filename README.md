@@ -244,13 +244,17 @@ details.
 
 The EOS client policy must permit the Sessions action. A newly published
 session can take several seconds to appear in searches. The supplied
-`sessions.bmx` GUI diagnostic publishes a temporary public session, finds and
-inspects it, starts and ends it, and finally removes it. The two-account
-`eos_sessions_test.bmx` app verifies invitation delivery, invite-cache lookup,
-joining, player registration, leaving, and cleanup. When both accounts run in
-one platform instance, EOS may populate the invite cache without emitting the
-invite-received notification; applications should treat the queried cache as
-authoritative.
+`sessions.bmx` GUI diagnostic publishes and updates a temporary public session,
+verifies its capacity and attributes by key, dumps its local state to the EOS
+log, finds and inspects it, starts and ends it, and finally removes it. The
+two-account `eos_sessions_test.bmx` app verifies invitation delivery,
+invite-cache lookup, joining, player registration, leaving, and cleanup using
+an independent EOS platform instance for each account. In Developer Auth
+testing, EOS populated the receiving account's invite cache without emitting
+the invite-received notification, even across independent platform instances.
+Applications should treat `QueryInvites` and the resulting cache as
+authoritative rather than
+depending on notification delivery.
 
 ## Features and examples
 

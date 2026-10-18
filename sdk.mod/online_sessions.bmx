@@ -876,6 +876,16 @@ Type TEOSSessions
 		Return bmx_eos_sessions_is_user_in_session(_handle, sessionName, targetUserId._NativeHandle())
 	End Method
 
+	Rem
+	bbdoc: Writes the named local session's state to the EOS log for diagnostics.
+	End Rem
+	Method DumpSessionState:EEOSResult(sessionName:String)
+		If Not _Valid() Or Not sessionName Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Return bmx_eos_sessions_dump_state(_handle, sessionName)
+	End Method
+
 	Private
 	Method _Valid:Int()
 		Return _owner <> Null And _owner.IsValid() And _handle <> Null
@@ -1159,6 +1169,24 @@ Type TEOSSessionDetails
 		Return result
 	End Method
 
+	Rem
+	bbdoc: Copies a session attribute using its exact key.
+	End Rem
+	Method CopyAttributeByKey:EEOSResult(key:String, attribute:TEOSSessionAttribute Var)
+		attribute = Null
+		If Not IsValid() Or Not key Then
+			Return EEOSResult.InvalidParameters
+		End If
+		Local value:TEOSSessionAttribute = New TEOSSessionAttribute
+		Local result:EEOSResult = bmx_eos_session_details_copy_attribute_by_key( ..
+			_handle, key, value.Key, value.ValueType, value.IntValue, ..
+			value.DoubleValue, value.BoolValue, value.StringValue, value.AdvertisementType)
+		If result = EEOSResult.Success Then
+			attribute = value
+		End If
+		Return result
+	End Method
+
 	Method IsValid:Int()
 		Return _owner <> Null And _owner.IsValid() And _handle <> Null
 	End Method
@@ -1291,8 +1319,10 @@ Extern
 	Function bmx_eos_session_details_copy_info:EEOSResult(detailsHandle:Byte Ptr, sessionId:String Var, hostAddress:String Var, openConnections:UInt Var, bucketId:String Var, maxPlayers:UInt Var, allowJoinInProgress:Int Var, permissionLevel:EEOSOnlineSessionPermissionLevel Var, invitesAllowed:Int Var, sanctionsEnabled:Int Var, allowedPlatformIds:Int[] Var, ownerUserHandle:Byte Ptr Var, ownerServerClientId:String Var)
 	Function bmx_eos_session_details_attribute_count:UInt(detailsHandle:Byte Ptr)
 	Function bmx_eos_session_details_copy_attribute:EEOSResult(detailsHandle:Byte Ptr, index:UInt, key:String Var, valueType:EEOSSessionAttributeType Var, intValue:Long Var, doubleValue:Double Var, boolValue:Int Var, stringValue:String Var, advertisement:EEOSSessionAttributeAdvertisementType Var)
+	Function bmx_eos_session_details_copy_attribute_by_key:EEOSResult(detailsHandle:Byte Ptr, requestedKey:String, key:String Var, valueType:EEOSSessionAttributeType Var, intValue:Long Var, doubleValue:Double Var, boolValue:Int Var, stringValue:String Var, advertisement:EEOSSessionAttributeAdvertisementType Var)
 	Function bmx_eos_session_details_release(detailsHandle:Byte Ptr)
 	Function bmx_eos_sessions_copy_active:EEOSResult(sessionsHandle:Byte Ptr, sessionName:String, activeHandle:Byte Ptr Var)
+	Function bmx_eos_sessions_dump_state:EEOSResult(sessionsHandle:Byte Ptr, sessionName:String)
 	Function bmx_eos_active_session_copy_info:EEOSResult(activeHandle:Byte Ptr, sessionName:String Var, localUserHandle:Byte Ptr Var, state:EEOSOnlineSessionState Var, sessionId:String Var, hostAddress:String Var, openConnections:UInt Var, bucketId:String Var, maxPlayers:UInt Var, allowJoinInProgress:Int Var, permissionLevel:EEOSOnlineSessionPermissionLevel Var, invitesAllowed:Int Var, sanctionsEnabled:Int Var, allowedPlatformIds:Int[] Var, ownerUserHandle:Byte Ptr Var, ownerServerClientId:String Var)
 	Function bmx_eos_active_session_player_count:UInt(activeHandle:Byte Ptr)
 	Function bmx_eos_active_session_player_by_index:Byte Ptr(activeHandle:Byte Ptr, index:UInt)

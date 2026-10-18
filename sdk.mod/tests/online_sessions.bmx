@@ -158,4 +158,13 @@ Check(EOS_SESSIONS_MAX_SEARCH_RESULTS = 200, "search-result limit should match E
 Check(EOS_SESSIONMODIFICATION_MAX_ATTRIBUTES = 64, "attribute limit should match EOS")
 Check(EOS_SESSIONS_SEARCH_BUCKET_ID = "bucket", "bucket search key should match EOS")
 
+Local invalidSessions:TEOSSessions = New TEOSSessions
+Check(invalidSessions.DumpSessionState("Game") = EEOSResult.InvalidParameters, ..
+	"state dump should reject an invalid Sessions interface")
+Local invalidDetails:TEOSSessionDetails = New TEOSSessionDetails
+Local invalidAttribute:TEOSSessionAttribute
+Check(invalidDetails.CopyAttributeByKey("build", invalidAttribute) = EEOSResult.InvalidParameters, ..
+	"keyed attribute copy should reject an invalid details handle")
+Check(Not invalidAttribute, "failed keyed attribute copy should clear the output")
+
 Print "EOS online sessions tests passed."
