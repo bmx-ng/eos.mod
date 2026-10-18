@@ -11,7 +11,7 @@ per main-loop iteration and release every platform before #EOSShutdown.
 End Rem
 Module EOS.SDK
 
-ModuleInfo "Version: 0.18.0"
+ModuleInfo "Version: 0.19.0"
 ModuleInfo "License: zlib/libpng"
 ModuleInfo "Copyright: Epic Online Services SDK - Epic Games, Inc."
 ModuleInfo "Copyright: Wrapper - 2026 Bruce A Henderson"
@@ -52,6 +52,8 @@ ModuleInfo "History: Added P2P packet transport and connection-control foundatio
 ModuleInfo "History: Added P2P NAT, relay, port-range, and packet-queue controls."
 ModuleInfo "History: 0.18.0"
 ModuleInfo "History: Added streaming Title Storage and Player Data Storage APIs."
+ModuleInfo "History: 0.19.0"
+ModuleInfo "History: Added managed Auth-to-Connect sessions, refresh, retry, and persistent sign-out."
 
 ?win32x64
 ModuleInfo "LD_OPTS: -L%PWD%/SDK/Bin"
@@ -838,6 +840,10 @@ Interface IEOSAuthLogoutListener
 	Method OnEOSAuthLogout(result:EEOSResult, localUserId:TEOSEpicAccountId)
 End Interface
 
+Interface IEOSAuthDeletePersistentAuthListener
+	Method OnEOSAuthDeletePersistentAuth(result:EEOSResult)
+End Interface
+
 Interface IEOSAuthLoginStatusListener
 	Method OnEOSAuthLoginStatusChanged(localUserId:TEOSEpicAccountId, previousStatus:EEOSLoginStatus, currentStatus:EEOSLoginStatus)
 End Interface
@@ -1445,6 +1451,49 @@ Type TEOSAuthLogoutRequest
 
 	Function _Cancel(request:TEOSAuthLogoutRequest) { nomangle }
 		_Complete(request, EEOSResult.Canceled, Null)
+	End Function
+
+	Method IsComplete:Int()
+		Return _complete
+	End Method
+End Type
+
+Rem
+bbdoc: One pending request to revoke the locally persisted Auth credential.
+End Rem
+Type TEOSAuthDeletePersistentAuthRequest
+	Private
+	Field _owner:TEOSPlatform
+	Field _listener:IEOSAuthDeletePersistentAuthListener
+	Field _complete:Int
+
+	Public
+	Function _Create:TEOSAuthDeletePersistentAuthRequest(owner:TEOSPlatform, listener:IEOSAuthDeletePersistentAuthListener)
+		If Not owner Or Not listener Then
+			Return Null
+		End If
+		Local request:TEOSAuthDeletePersistentAuthRequest = New TEOSAuthDeletePersistentAuthRequest
+		request._owner = owner
+		request._listener = listener
+		Return request
+	End Function
+
+	Function _Complete(request:TEOSAuthDeletePersistentAuthRequest, result:EEOSResult) { nomangle }
+		If Not request Or request._complete Then
+			Return
+		End If
+		Local listener:IEOSAuthDeletePersistentAuthListener = request._listener
+		If EOSResultIsOperationComplete(result) Then
+			request._complete = True
+			request._listener = Null
+		End If
+		If listener Then
+			listener.OnEOSAuthDeletePersistentAuth(result)
+		End If
+	End Function
+
+	Function _Cancel(request:TEOSAuthDeletePersistentAuthRequest) { nomangle }
+		_Complete(request, EEOSResult.Canceled)
 	End Function
 
 	Method IsComplete:Int()
@@ -2893,6 +2942,20 @@ Type TEOSAuth
 		If Not _owner Or Not _owner.IsValid() Or Not localUserId Or Not localUserId._NativeHandle() Or Not listener Then Return Null
 		Local request:TEOSAuthLogoutRequest = TEOSAuthLogoutRequest._Create(_owner, listener)
 		bmx_eos_auth_logout(_owner._NativeHandle(), _handle, request, localUserId._NativeHandle())
+		Return request
+	End Method
+
+	Rem
+	bbdoc: Revokes and removes the credential used by PersistentAuth login.
+	about: RefreshToken is normally empty on desktop and mobile. Console callers
+	pass the long-lived refresh token stored by the title.
+	End Rem
+	Method DeletePersistentAuth:TEOSAuthDeletePersistentAuthRequest(listener:IEOSAuthDeletePersistentAuthListener, refreshToken:String = "")
+		If Not _owner Or Not _owner.IsValid() Or Not listener Then
+			Return Null
+		End If
+		Local request:TEOSAuthDeletePersistentAuthRequest = TEOSAuthDeletePersistentAuthRequest._Create(_owner, listener)
+		bmx_eos_auth_delete_persistent(_owner._NativeHandle(), _handle, request, refreshToken)
 		Return request
 	End Method
 
@@ -4712,6 +4775,7 @@ Extern
 
 	Function bmx_eos_auth_login(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLoginRequest, id:String, token:String, credentialType:EEOSLoginCredentialType, externalType:EEOSExternalCredentialType, scopeFlags:EEOSAuthScopeFlags, loginFlags:EEOSAuthLoginFlags)
 	Function bmx_eos_auth_logout(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthLogoutRequest, localUserHandle:Byte Ptr)
+	Function bmx_eos_auth_delete_persistent(platformHandle:Byte Ptr, authHandle:Byte Ptr, request:TEOSAuthDeletePersistentAuthRequest, refreshToken:String)
 	Function bmx_eos_auth_get_logged_in_accounts_count:Int(authHandle:Byte Ptr)
 	Function bmx_eos_auth_get_logged_in_account_by_index:Byte Ptr(authHandle:Byte Ptr, index:Int)
 	Function bmx_eos_auth_get_login_status:Int(authHandle:Byte Ptr, localUserHandle:Byte Ptr)
@@ -4866,3 +4930,4 @@ End Extern
 
 Public
 Include "storage.bmx"
+Include "session.bmx"

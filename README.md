@@ -142,12 +142,73 @@ terminal callback is delivered. Keep notification subscription objects for as
 long as notifications are wanted, then call `Remove`. Data returned from EOS
 cache-copy methods is owned by BlitzMax and can be retained normally.
 
+### Managed login sessions
+
+`TEOSSessionCoordinator` hides the Auth-to-Connect sequence used by games. It
+owns the login and status callbacks, copies a fresh Epic ID token into Connect,
+refreshes Connect before expiry, retries temporary network failures, and logs
+out in the correct order. A game waits for `OnEOSSessionReady` and then uses
+`ProductUserId()` for EOS Game Services.
+
+Use `PersistentAuth` with an `AccountPortal` fallback for a normal desktop
+release. Developer Authentication Tool credentials remain useful for local
+testing:
+
+```blitzmax
+Type TGameLogin Extends TEOSSessionListener
+	Field session:TEOSSessionCoordinator
+
+	Method OnEOSSessionProductUserCreationRequired() Override
+		' Ask the player before doing this in a real game.
+		session.CreateProductUser()
+	End Method
+
+	Method OnEOSSessionReady(accountId:TEOSEpicAccountId, userId:TEOSProductUserId) Override
+		Print "EOS Product User: " + userId.ToString()
+	End Method
+
+	Method OnEOSSessionError(result:EEOSResult, recoverable:Int) Override
+		If Not recoverable Then
+			Print "EOS login failed: " + EOSResultString(result)
+		End If
+	End Method
+End Type
+
+Local persistentCredentials:TEOSAuthCredentials = New TEOSAuthCredentials
+persistentCredentials.Type = EEOSLoginCredentialType.PersistentAuth
+Local persistentLogin:TEOSAuthLoginOptions = New TEOSAuthLoginOptions
+persistentLogin.Credentials = persistentCredentials
+
+Local portalCredentials:TEOSAuthCredentials = New TEOSAuthCredentials
+portalCredentials.Type = EEOSLoginCredentialType.AccountPortal
+Local portalLogin:TEOSAuthLoginOptions = New TEOSAuthLoginOptions
+portalLogin.Credentials = portalCredentials
+
+Local options:TEOSSessionOptions = New TEOSSessionOptions
+options.LoginOptions = persistentLogin
+options.FallbackLoginOptions = portalLogin
+
+Local listener:TGameLogin = New TGameLogin
+Local session:TEOSSessionCoordinator = TEOSSessionCoordinator.Create(platform, listener)
+listener.session = session
+session.Start(options)
+
+' Call once per main-loop iteration until shutdown.
+session.Tick()
+```
+
+Product User creation is never automatic. When the coordinator enters
+`AwaitingProductUserCreation`, obtain the player's approval and call
+`CreateProductUser`, or call `CancelProductUserCreation`. Use `Logout(True)`
+for a “sign out and forget me” action; it also removes the credential used by
+future `PersistentAuth` login.
+
 ## Features and examples
 
 | Area | Module support | Example or test |
 | --- | --- | --- |
 | Foundation | initialization, platform lifetime, logging, result helpers | [`foundation.bmx`](sdk.mod/examples/foundation.bmx) |
-| Auth and Connect | browser or Developer Auth login, logout, Product Users, status and expiry notifications | [`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) |
+| Auth and Connect | managed browser, persistent, or Developer Auth sessions; logout; Product Users; refresh and reconnection | [`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) |
 | User Info | account profiles, display-name lookup, linked external accounts | [`user_info.bmx`](sdk.mod/examples/user_info.bmx) |
 | Friends | friends, blocklist, relationship state, change notifications | [`friends.bmx`](sdk.mod/examples/friends.bmx) |
 | Presence | queries, online state, rich text, product data, notifications | [`presence.bmx`](sdk.mod/examples/presence.bmx) |
@@ -159,9 +220,10 @@ cache-copy methods is owned by BlitzMax and can be retained normally.
 | Title Storage | metadata queries, streamed downloads, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 | Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 
-The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app is the
-best first integration test because it exercises the same complete account and
-Product User flow a game needs.
+The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app remains
+the best first portal and permission test. The smaller
+[`auth_connect.bmx`](sdk.mod/examples/auth_connect.bmx) example demonstrates the
+managed session API intended for games.
 
 Storage transfers use BlitzMax `TStream` objects. Pass a file stream for direct
 disk I/O, a memory stream for in-memory data, or a custom stream for another
@@ -227,7 +289,10 @@ application bundle. Full packaging details are in
 
 The separate [GameNet](https://github.com/bmx-ng/gamenet.mod) project provides
 higher-level, transport-neutral multiplayer building blocks. Its EOS adapters
-consume this binding; they are intentionally not part of `eos.mod`.
+consume this binding; they are intentionally not part of `eos.mod`. Once the
+coordinator is ready, pass it directly to `TEOSOnlineService.Create`. GameNet
+then consumes the Product User identity, pumps the coordinator, and reports a
+confirmed session loss as an authentication failure.
 
 ## Roadmap
 
