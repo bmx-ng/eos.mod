@@ -33,6 +33,8 @@ void eos_sdk_TEOSAuthLoginRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAcc
 void eos_sdk_TEOSAuthLoginRequest__Cancel(BBObject *);
 void eos_sdk_TEOSAuthLogoutRequest__Complete(BBObject *, EOS_EResult, EOS_EpicAccountId);
 void eos_sdk_TEOSAuthLogoutRequest__Cancel(BBObject *);
+void eos_sdk_TEOSAuthDeletePersistentAuthRequest__Complete(BBObject *, EOS_EResult);
+void eos_sdk_TEOSAuthDeletePersistentAuthRequest__Cancel(BBObject *);
 void eos_sdk_TEOSConnectLoginRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId, EOS_ContinuanceToken);
 void eos_sdk_TEOSConnectLoginRequest__Cancel(BBObject *);
 void eos_sdk_TEOSConnectCreateUserRequest__Complete(BBObject *, EOS_EResult, EOS_ProductUserId);
@@ -139,6 +141,7 @@ std::deque<LogEntry> g_logQueue;
 enum class RequestKind {
 	AuthLogin,
 	AuthLogout,
+	AuthDeletePersistent,
 	ConnectLogin,
 	ConnectCreateUser,
 	ConnectLogout,
@@ -213,6 +216,9 @@ void CancelPlatformRequests(EOS_HPlatform platform) {
 			break;
 		case RequestKind::AuthLogout:
 			eos_sdk_TEOSAuthLogoutRequest__Cancel(context->request);
+			break;
+		case RequestKind::AuthDeletePersistent:
+			eos_sdk_TEOSAuthDeletePersistentAuthRequest__Cancel(context->request);
 			break;
 		case RequestKind::ConnectLogin:
 			eos_sdk_TEOSConnectLoginRequest__Cancel(context->request);
@@ -723,6 +729,21 @@ void EOS_CALL AuthLogoutCallback(const EOS_Auth_LogoutCallbackInfo *data) {
 	if (terminal) CompleteRequest(context);
 	eos_sdk_TEOSAuthLogoutRequest__Complete(context->request, data->ResultCode, data->LocalUserId);
 	if (terminal) delete context;
+}
+
+void EOS_CALL AuthDeletePersistentCallback(const EOS_Auth_DeletePersistentAuthCallbackInfo *data) {
+	if (!data || !data->ClientData) {
+		return;
+	}
+	auto *context = static_cast<RequestContext *>(data->ClientData);
+	const bool terminal = EOS_EResult_IsOperationComplete(data->ResultCode);
+	if (terminal) {
+		CompleteRequest(context);
+	}
+	eos_sdk_TEOSAuthDeletePersistentAuthRequest__Complete(context->request, data->ResultCode);
+	if (terminal) {
+		delete context;
+	}
 }
 
 void EOS_CALL ConnectLoginCallback(const EOS_Connect_LoginCallbackInfo *data) {
@@ -1310,6 +1331,16 @@ void bmx_eos_auth_logout(EOS_HPlatform platform, EOS_HAuth auth, BBObject *reque
 	options.LocalUserId = localUserId;
 	auto *context = CreateRequest(platform, request, RequestKind::AuthLogout);
 	EOS_Auth_Logout(auth, &options, context, AuthLogoutCallback);
+}
+
+void bmx_eos_auth_delete_persistent(EOS_HPlatform platform, EOS_HAuth auth, BBObject *request,
+	BBString *maxRefreshToken) {
+	UTF8String refreshToken(maxRefreshToken);
+	EOS_Auth_DeletePersistentAuthOptions options{};
+	options.ApiVersion = EOS_AUTH_DELETEPERSISTENTAUTH_API_LATEST;
+	options.RefreshToken = refreshToken.optional();
+	auto *context = CreateRequest(platform, request, RequestKind::AuthDeletePersistent);
+	EOS_Auth_DeletePersistentAuth(auth, &options, context, AuthDeletePersistentCallback);
 }
 
 int bmx_eos_auth_get_logged_in_accounts_count(EOS_HAuth auth) {
