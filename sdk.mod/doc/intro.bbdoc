@@ -77,6 +77,8 @@ membership; EOS P2P or another transport carries gameplay data. Session
 invitations can be sent, rejected, queried from the local cache, and resolved
 to owned details handles. Removable subscriptions report invitation receipt,
 acceptance and rejection, overlay join acceptance, and overlay leave requests.
+Details attributes can be copied by index or exact key, and active local state
+can be written to the EOS log for diagnostics.
 
 Platform.P2P() sends and receives packets of up to 1170 bytes using named
 sockets and byte-sized channels. Reliability and delayed-delivery policy are

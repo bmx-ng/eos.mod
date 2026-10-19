@@ -130,8 +130,8 @@ event loop; a Max2D window is sufficient and MaxGUI is not required.
 Sessions flow. It publishes a public session for the first account, sends an
 invitation to the second account, queries and resolves the invite cache, joins,
 registers and unregisters the second player, then destroys both local session
-views. It also registers the invite-received notification used by separate
-game clients.
+views. Each account runs through an independent EOS platform instance, and the
+app also registers the invite-received notification used by separate clients.
 
 Build it as a GUI application:
 
@@ -149,8 +149,9 @@ as the second application argument:
 open tools/eos_sessions_test.app --args sdk.mod/examples/eos.local.conf second-credential-name
 ```
 
-The EOS client policy must allow Sessions. With two users logged into one EOS
-platform instance, EOS may update the invite cache without emitting the
-invite-received notification. The test waits briefly for that notification and
-then queries the authoritative invite cache, matching the recovery path a game
+The EOS client policy must allow Sessions. During Developer Auth testing, EOS
+updated the receiving account's invite cache without emitting the
+invite-received notification, even when each user had an independently ticking
+platform instance. The test waits briefly for that notification and then
+queries the authoritative invite cache, matching the recovery path a game
 should use after reconnecting or returning to the foreground.

@@ -416,6 +416,40 @@ EOS_EResult CopyDetailsInfo(
 	return EOS_EResult::EOS_Success;
 }
 
+void CopyAttributeData(
+	const EOS_SessionDetails_Attribute *attribute,
+	BBString **key,
+	EOS_ESessionAttributeType *valueType,
+	int64_t *intValue,
+	double *doubleValue,
+	int *boolValue,
+	BBString **stringValue,
+	EOS_ESessionAttributeAdvertisementType *advertisement) {
+	*key = ToBBString(attribute->Data->Key);
+	*valueType = attribute->Data->ValueType;
+	*intValue = 0;
+	*doubleValue = 0.0;
+	*boolValue = false;
+	*stringValue = &bbEmptyString;
+	switch (attribute->Data->ValueType) {
+	case EOS_ESessionAttributeType::EOS_AT_BOOLEAN:
+		*boolValue = attribute->Data->Value.AsBool == EOS_TRUE;
+		break;
+	case EOS_ESessionAttributeType::EOS_AT_INT64:
+		*intValue = attribute->Data->Value.AsInt64;
+		break;
+	case EOS_ESessionAttributeType::EOS_AT_DOUBLE:
+		*doubleValue = attribute->Data->Value.AsDouble;
+		break;
+	case EOS_ESessionAttributeType::EOS_AT_STRING:
+		*stringValue = ToBBString(attribute->Data->Value.AsUtf8);
+		break;
+	default:
+		break;
+	}
+	*advertisement = attribute->AdvertisementType;
+}
+
 } // namespace
 
 extern "C" {
@@ -978,31 +1012,44 @@ EOS_EResult bmx_eos_session_details_copy_attribute(
 	const EOS_EResult result = EOS_SessionDetails_CopySessionAttributeByIndex(
 		details, &options, &attribute);
 	if (result != EOS_EResult::EOS_Success || !attribute || !attribute->Data) {
+		if (attribute) {
+			EOS_SessionDetails_Attribute_Release(attribute);
+		}
 		return result;
 	}
-	*key = ToBBString(attribute->Data->Key);
-	*valueType = attribute->Data->ValueType;
-	*intValue = 0;
-	*doubleValue = 0.0;
-	*boolValue = false;
-	*stringValue = &bbEmptyString;
-	switch (attribute->Data->ValueType) {
-	case EOS_ESessionAttributeType::EOS_AT_BOOLEAN:
-		*boolValue = attribute->Data->Value.AsBool == EOS_TRUE;
-		break;
-	case EOS_ESessionAttributeType::EOS_AT_INT64:
-		*intValue = attribute->Data->Value.AsInt64;
-		break;
-	case EOS_ESessionAttributeType::EOS_AT_DOUBLE:
-		*doubleValue = attribute->Data->Value.AsDouble;
-		break;
-	case EOS_ESessionAttributeType::EOS_AT_STRING:
-		*stringValue = ToBBString(attribute->Data->Value.AsUtf8);
-		break;
-	default:
-		break;
+	CopyAttributeData(
+		attribute, key, valueType, intValue, doubleValue,
+		boolValue, stringValue, advertisement);
+	EOS_SessionDetails_Attribute_Release(attribute);
+	return result;
+}
+
+EOS_EResult bmx_eos_session_details_copy_attribute_by_key(
+	EOS_HSessionDetails details,
+	BBString *maxKey,
+	BBString **key,
+	EOS_ESessionAttributeType *valueType,
+	int64_t *intValue,
+	double *doubleValue,
+	int *boolValue,
+	BBString **stringValue,
+	EOS_ESessionAttributeAdvertisementType *advertisement) {
+	UTF8String requestedKey(maxKey);
+	EOS_SessionDetails_CopySessionAttributeByKeyOptions options{};
+	options.ApiVersion = EOS_SESSIONDETAILS_COPYSESSIONATTRIBUTEBYKEY_API_LATEST;
+	options.AttrKey = requestedKey.required();
+	EOS_SessionDetails_Attribute *attribute = nullptr;
+	const EOS_EResult result = EOS_SessionDetails_CopySessionAttributeByKey(
+		details, &options, &attribute);
+	if (result != EOS_EResult::EOS_Success || !attribute || !attribute->Data) {
+		if (attribute) {
+			EOS_SessionDetails_Attribute_Release(attribute);
+		}
+		return result;
 	}
-	*advertisement = attribute->AdvertisementType;
+	CopyAttributeData(
+		attribute, key, valueType, intValue, doubleValue,
+		boolValue, stringValue, advertisement);
 	EOS_SessionDetails_Attribute_Release(attribute);
 	return result;
 }
@@ -1020,6 +1067,15 @@ EOS_EResult bmx_eos_sessions_copy_active(
 	options.ApiVersion = EOS_SESSIONS_COPYACTIVESESSIONHANDLE_API_LATEST;
 	options.SessionName = sessionName.required();
 	return EOS_Sessions_CopyActiveSessionHandle(sessions, &options, active);
+}
+
+EOS_EResult bmx_eos_sessions_dump_state(
+	EOS_HSessions sessions, BBString *maxSessionName) {
+	UTF8String sessionName(maxSessionName);
+	EOS_Sessions_DumpSessionStateOptions options{};
+	options.ApiVersion = EOS_SESSIONS_DUMPSESSIONSTATE_API_LATEST;
+	options.SessionName = sessionName.required();
+	return EOS_Sessions_DumpSessionState(sessions, &options);
 }
 
 EOS_EResult bmx_eos_active_session_copy_info(

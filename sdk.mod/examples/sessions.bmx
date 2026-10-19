@@ -24,6 +24,7 @@ Type TSessionsFlow Extends TEOSSessionListener Implements IEOSSessionUpdateListe
 	Field CreateMissingProductUser:Int
 	Field SearchAt:Int
 	Field SearchAttempts:Int
+	Field UpdateStage:Int
 
 	Method OnEOSSessionStateChanged(state:EEOSSessionState) Override
 		Print "Login state: " + Int(state)
@@ -115,11 +116,56 @@ Type TSessionsFlow Extends TEOSSessionListener Implements IEOSSessionUpdateListe
 			Return
 		End If
 
-		Print "Session ID: " + sessionId
+		If UpdateStage = 0 Then
+			Print "Session ID: " + sessionId
+			InspectActiveSession()
+			UpdateStage = 1
+			UpdatePublishedSession()
+			Return
+		End If
+
+		Print "Published session update succeeded."
 		InspectActiveSession()
+		Local dumpResult:EEOSResult = Sessions.DumpSessionState(SESSION_NAME)
+		Print "Dump session state: " + EOSResultString(dumpResult)
+		If dumpResult <> EEOSResult.Success Then
+			Fail("Session state dump failed: " + EOSResultString(dumpResult))
+			Return
+		End If
 		sessionStatus = "Session published; waiting for search indexing..."
-		sessionDetail = "EOS can take a few seconds to expose a new session to search."
+		sessionDetail = "The updated capacity and attributes will be verified through search."
 		SearchAt = MilliSecs() + 5000
+	End Method
+
+	Method UpdatePublishedSession()
+		sessionStatus = "Updating the published session..."
+		sessionDetail = "Changing its capacity and adding a searchable map attribute."
+		Local modification:TEOSSessionModification
+		Local result:EEOSResult = Sessions.UpdateSessionModification(SESSION_NAME, modification)
+		If result <> EEOSResult.Success Then
+			Fail("Create update modification failed: " + EOSResultString(result))
+			Return
+		End If
+
+		result = modification.SetMaxPlayers(6)
+		If result = EEOSResult.Success Then
+			result = modification.AddIntAttribute("build", 2)
+		End If
+		If result = EEOSResult.Success Then
+			result = modification.AddStringAttribute("map", "test-map")
+		End If
+		If result <> EEOSResult.Success Then
+			modification.Release()
+			Fail("Configure published session update failed: " + EOSResultString(result))
+			Return
+		End If
+
+		If Not Sessions.UpdateSession(modification, Self) Then
+			modification.Release()
+			Fail("The published session update could not start.")
+			Return
+		End If
+		modification.Release()
 	End Method
 
 	Method Tick()
@@ -199,6 +245,26 @@ Type TSessionsFlow Extends TEOSSessionListener Implements IEOSSessionUpdateListe
 					PrintAttribute(attribute)
 				End If
 			Next
+			If info.MaxPlayers <> 6 Then
+				result = EEOSResult.UnexpectedError
+			Else
+				Local buildAttribute:TEOSSessionAttribute
+				result = details.CopyAttributeByKey("build", buildAttribute)
+				If result = EEOSResult.Success And ..
+					(buildAttribute.ValueType <> EEOSSessionAttributeType.Int64 Or ..
+					buildAttribute.IntValue <> 2) Then
+					result = EEOSResult.UnexpectedError
+				End If
+			End If
+			If result = EEOSResult.Success Then
+				Local mapAttribute:TEOSSessionAttribute
+				result = details.CopyAttributeByKey("map", mapAttribute)
+				If result = EEOSResult.Success And ..
+					(mapAttribute.ValueType <> EEOSSessionAttributeType.StringValue Or ..
+					mapAttribute.StringValue <> "test-map") Then
+					result = EEOSResult.UnexpectedError
+				End If
+			End If
 		End If
 		details.Release()
 		If result <> EEOSResult.Success Then
@@ -237,7 +303,7 @@ Type TSessionsFlow Extends TEOSSessionListener Implements IEOSSessionUpdateListe
 				End If
 			Case EEOSSessionOperation.DestroySession
 				sessionStatus = "EOS Sessions lifecycle succeeded."
-				sessionDetail = "Published, searched, inspected, started, ended, and destroyed."
+				sessionDetail = "Published, updated, searched, inspected, started, ended, and destroyed."
 				sessionSuccess = True
 				sessionDone = True
 		End Select
@@ -309,7 +375,7 @@ Local config:String = LoadText(configPath)
 
 Local initializeOptions:TEOSInitializeOptions = New TEOSInitializeOptions
 initializeOptions.ProductName = "EOS Sessions example"
-initializeOptions.ProductVersion = "0.21.0"
+initializeOptions.ProductVersion = "0.23.0"
 Local result:EEOSResult = EOSInitialize(initializeOptions)
 If result <> EEOSResult.Success Then
 	RuntimeError "EOS initialization failed: " + EOSResultString(result)

@@ -35,8 +35,10 @@ Type TSessionsPeer Implements IEOSAuthLoginListener, IEOSConnectLoginListener, I
 	Field Manager:TTwoUserSessionsTest
 	Field Number:Int
 	Field Credential:String
+	Field Platform:TEOSPlatform
 	Field Auth:TEOSAuth
 	Field Connect:TEOSConnect
+	Field Sessions:TEOSSessions
 	Field ProductUserId:TEOSProductUserId
 	Field CreateMissingProductUser:Int
 	Field ContinuanceToken:TEOSConnectContinuanceToken
@@ -119,10 +121,6 @@ Type TSessionsPeer Implements IEOSAuthLoginListener, IEOSConnectLoginListener, I
 End Type
 
 Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOperationListener, IEOSSessionPlayersListener, IEOSSessionInviteReceivedListener
-	Field Platform:TEOSPlatform
-	Field Auth:TEOSAuth
-	Field Connect:TEOSConnect
-	Field Sessions:TEOSSessions
 	Field Peers:TSessionsPeer[2]
 	Field ReadyCount:Int
 	Field DevAuthHost:String
@@ -135,13 +133,15 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 	Field InviteFlowStarted:Int
 	Field CleanupStage:Int
 
-	Method AddPeer:TSessionsPeer(number:Int, credential:String, createMissing:Int)
+	Method AddPeer:TSessionsPeer(number:Int, credential:String, createMissing:Int, platform:TEOSPlatform)
 		Local peer:TSessionsPeer = New TSessionsPeer
 		peer.Manager = Self
 		peer.Number = number
 		peer.Credential = credential
-		peer.Auth = Auth
-		peer.Connect = Connect
+		peer.Platform = platform
+		peer.Auth = platform.Auth()
+		peer.Connect = platform.Connect()
+		peer.Sessions = platform.Sessions()
 		peer.CreateMissingProductUser = createMissing
 		Peers[number - 1] = peer
 		Return peer
@@ -176,13 +176,13 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		End If
 		pendingProductUser = False
 		statusTitle = "Creating account " + PendingPeer.Number + " Product User..."
-		If Not Connect.CreateUser(PendingPeer.ContinuanceToken, PendingPeer) Then
+		If Not PendingPeer.Connect.CreateUser(PendingPeer.ContinuanceToken, PendingPeer) Then
 			Fail("Product User creation did not start", "EOS rejected the request.")
 		End If
 	End Method
 
 	Method BeginSessionTest()
-		InviteSubscription = Sessions.AddNotifyInviteReceived(Self)
+		InviteSubscription = Peers[1].Sessions.AddNotifyInviteReceived(Self)
 		If Not InviteSubscription Then
 			Fail("Invite notification setup failed", "The Sessions notification could not be registered.")
 			Return
@@ -198,7 +198,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		options.SanctionsEnabled = True
 
 		Local modification:TEOSSessionModification
-		Local result:EEOSResult = Sessions.CreateSessionModification(options, modification)
+		Local result:EEOSResult = Peers[0].Sessions.CreateSessionModification(options, modification)
 		If result <> EEOSResult.Success Then
 			Fail("Host session setup failed", EOSResultString(result))
 			Return
@@ -213,7 +213,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		If result = EEOSResult.Success Then
 			result = modification.AddStringAttribute("test", "two-user-join")
 		End If
-		If result <> EEOSResult.Success Or Not Sessions.UpdateSession(modification, Self) Then
+		If result <> EEOSResult.Success Or Not Peers[0].Sessions.UpdateSession(modification, Self) Then
 			modification.Release()
 			Fail("Host session publication failed", EOSResultString(result))
 			Return
@@ -232,7 +232,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		Print "Published session ID: " + sessionId
 		statusTitle = "Host session published; sending invitation..."
 		eventSummary = "Session published. Waiting for account 2 invitation."
-		If Not Sessions.SendInvite( ..
+		If Not Peers[0].Sessions.SendInvite( ..
 			HOST_SESSION_NAME, Peers[0].ProductUserId, Peers[1].ProductUserId, Self) Then
 			Fail("Session invitation did not start", "EOS rejected the request.")
 		End If
@@ -270,14 +270,18 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 			Case EEOSSessionOperation.DestroySession
 				If CleanupStage = 1 Then
 					CleanupStage = 2
-					If Not Sessions.DestroySession(HOST_SESSION_NAME, Self) Then
+					If Not Peers[0].Sessions.DestroySession(HOST_SESSION_NAME, Self) Then
 						Fail("Host session cleanup did not start", "EOS rejected the request.")
 					End If
 				Else If CleanupStage = 2 Then
 					statusKind = 2
 					statusTitle = "Two-account EOS Sessions test succeeded"
-					statusDetail = "Published, invited, joined, registered, left, and destroyed."
-					eventSummary = "Invite cache and two local active-session views were verified."
+					If InviteReceived Then
+						statusDetail = "The independent client received the invitation notification."
+					Else
+						statusDetail = "The invitation arrived through the invite-cache fallback."
+					End If
+					eventSummary = "Published, invited, joined, registered, left, and destroyed."
 					succeeded = True
 					done = True
 				End If
@@ -285,7 +289,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 	End Method
 
 	Method Tick()
-		If SendCompleted And Not InviteFlowStarted And MilliSecs() - SendCompletedAt >= 2000 Then
+		If SendCompleted And Not InviteFlowStarted And MilliSecs() - SendCompletedAt >= 5000 Then
 			BeginInviteQuery(False)
 		End If
 	End Method
@@ -305,13 +309,13 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 			statusTitle = "Invitation sent; querying account 2's invite cache..."
 			eventSummary = "EOS did not emit the local notification; checking the authoritative cache."
 		End If
-		If Not Sessions.QueryInvites(Peers[1].ProductUserId, Self) Then
+		If Not Peers[1].Sessions.QueryInvites(Peers[1].ProductUserId, Self) Then
 			Fail("Invite query did not start", "EOS rejected the request.")
 		End If
 	End Method
 
 	Method JoinFromInviteCache()
-		Local count:UInt = Sessions.InviteCount(Peers[1].ProductUserId)
+		Local count:UInt = Peers[1].Sessions.InviteCount(Peers[1].ProductUserId)
 		Print "Invite cache count: " + count
 		If count = 0 Then
 			Fail("The invitation cache is empty", "The received invite was not returned by QueryInvites.")
@@ -319,7 +323,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		End If
 
 		Local cachedInviteId:String
-		Local result:EEOSResult = Sessions.GetInviteIdByIndex( ..
+		Local result:EEOSResult = Peers[1].Sessions.GetInviteIdByIndex( ..
 			Peers[1].ProductUserId, 0, cachedInviteId)
 		If result <> EEOSResult.Success Then
 			Fail("Could not copy the invitation ID", EOSResultString(result))
@@ -328,7 +332,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		Print "Cached invite ID: " + cachedInviteId
 
 		Local details:TEOSSessionDetails
-		result = Sessions.CopySessionDetailsByInviteId(cachedInviteId, details)
+		result = Peers[1].Sessions.CopySessionDetailsByInviteId(cachedInviteId, details)
 		If result <> EEOSResult.Success Then
 			Fail("Could not copy invited session details", EOSResultString(result))
 			Return
@@ -350,7 +354,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		joinOptions.SessionName = CLIENT_SESSION_NAME
 		joinOptions.SessionDetails = details
 		joinOptions.LocalUserId = Peers[1].ProductUserId
-		If Not Sessions.JoinSession(joinOptions, Self) Then
+		If Not Peers[1].Sessions.JoinSession(joinOptions, Self) Then
 			details.Release()
 			Fail("Joining the invited session did not start", "EOS rejected the request.")
 			Return
@@ -362,7 +366,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 		statusTitle = "Account 2 joined; registering it with the host..."
 		eventSummary = "Both users now have local active-session views."
 		Local players:TEOSProductUserId[] = [Peers[1].ProductUserId]
-		If Not Sessions.RegisterPlayers(HOST_SESSION_NAME, players, Self) Then
+		If Not Peers[0].Sessions.RegisterPlayers(HOST_SESSION_NAME, players, Self) Then
 			Fail("Player registration did not start", "EOS rejected the request.")
 		End If
 	End Method
@@ -378,7 +382,7 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 
 		If operation = EEOSSessionOperation.RegisterPlayers Then
 			Local active:TEOSActiveSession
-			result = Sessions.CopyActiveSession(HOST_SESSION_NAME, active)
+			result = Peers[0].Sessions.CopyActiveSession(HOST_SESSION_NAME, active)
 			If result <> EEOSResult.Success Then
 				Fail("Could not inspect the host session", EOSResultString(result))
 				Return
@@ -386,19 +390,19 @@ Type TTwoUserSessionsTest Implements IEOSSessionUpdateListener, IEOSSessionOpera
 			Local playerCount:UInt = active.RegisteredPlayerCount()
 			active.Release()
 			Print "Host registered players: " + playerCount
-			If Sessions.IsUserInSession(HOST_SESSION_NAME, Peers[1].ProductUserId) <> EEOSResult.Success Then
+			If Peers[0].Sessions.IsUserInSession(HOST_SESSION_NAME, Peers[1].ProductUserId) <> EEOSResult.Success Then
 				Fail("Account 2 was not found in the host session", "Registration completed without visible membership.")
 				Return
 			End If
 			statusTitle = "Membership verified; unregistering account 2..."
 			Local players:TEOSProductUserId[] = [Peers[1].ProductUserId]
-			If Not Sessions.UnregisterPlayers(HOST_SESSION_NAME, players, Self) Then
+			If Not Peers[0].Sessions.UnregisterPlayers(HOST_SESSION_NAME, players, Self) Then
 				Fail("Player unregistration did not start", "EOS rejected the request.")
 			End If
 		Else If operation = EEOSSessionOperation.UnregisterPlayers Then
 			statusTitle = "Account 2 left; cleaning up both local sessions..."
 			CleanupStage = 1
-			If Not Sessions.DestroySession(CLIENT_SESSION_NAME, Self) Then
+			If Not Peers[1].Sessions.DestroySession(CLIENT_SESSION_NAME, Self) Then
 				Fail("Client session cleanup did not start", "EOS rejected the request.")
 			End If
 		End If
@@ -504,7 +508,7 @@ Graphics WINDOW_WIDTH, WINDOW_HEIGHT, 0, 60, GRAPHICS_BACKBUFFER
 SetClsColor 22, 27, 38
 
 Local initialized:Int
-Local platform:TEOSPlatform
+Local platforms:TEOSPlatform[2]
 Local test:TTwoUserSessionsTest
 Local configPath:String = FindConfig()
 If Not configPath Then
@@ -532,7 +536,7 @@ Else
 	Else
 		Local options:TEOSInitializeOptions = New TEOSInitializeOptions
 		options.ProductName = "EOS Sessions Integration Test"
-		options.ProductVersion = "0.22.0"
+		options.ProductVersion = "0.23.0"
 		Local result:EEOSResult = EOSInitialize(options)
 		If result <> EEOSResult.Success Then
 			statusKind = 3
@@ -550,27 +554,27 @@ Else
 			platformOptions.ClientId = ConfigValue(config, "CLIENT_ID")
 			platformOptions.ClientSecret = ConfigValue(config, "CLIENT_SECRET")
 			platformOptions.EncryptionKey = ConfigValue(config, "ENCRYPTION_KEY")
-			platform = TEOSPlatform.Create(platformOptions)
-			If Not platform Then
+			platforms[0] = TEOSPlatform.Create(platformOptions)
+			platforms[1] = TEOSPlatform.Create(platformOptions)
+			If Not platforms[0] Or Not platforms[1] Then
 				statusKind = 3
-				statusTitle = "EOS platform creation failed"
+				statusTitle = "EOS client platform creation failed"
 				statusDetail = "Check the local product configuration."
 				done = True
 			Else
 				test = New TTwoUserSessionsTest
-				test.Platform = platform
-				test.Auth = platform.Auth()
-				test.Connect = platform.Connect()
-				test.Sessions = platform.Sessions()
 				test.DevAuthHost = ConfigValue(config, "DEV_AUTH_HOST")
-				If Not test.Auth Or Not test.Connect Or Not test.Sessions Then
+				Local createMissing:Int = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
+				Local first:TSessionsPeer = test.AddPeer( ..
+					1, firstCredential, createMissing, platforms[0])
+				Local second:TSessionsPeer = test.AddPeer( ..
+					2, secondCredential, createMissing, platforms[1])
+				If Not first.Auth Or Not first.Connect Or Not first.Sessions Or ..
+					Not second.Auth Or Not second.Connect Or Not second.Sessions Then
 					test.Fail("Required EOS interfaces are unavailable", "Auth, Connect, and Sessions are required.")
 				Else
-					Local createMissing:Int = Int(ConfigValue(config, "CREATE_MISSING_PRODUCT_USER"))
-					Local first:TSessionsPeer = test.AddPeer(1, firstCredential, createMissing)
-					test.AddPeer(2, secondCredential, createMissing)
 					statusTitle = "Signing in both test accounts..."
-					statusDetail = "Connecting account 1 first; account 2 will follow automatically."
+					statusDetail = "Each account uses an independent EOS client platform."
 					If Not first.Start(test.DevAuthHost) Then
 						test.Fail("Account 1 login did not start", "Check the first credential name.")
 					End If
@@ -582,9 +586,11 @@ End If
 
 Local startedAt:Int = MilliSecs()
 While Not KeyHit(KEY_ESCAPE) And Not AppTerminate()
-	If platform Then
-		platform.Tick()
-	End If
+	For Local platform:TEOSPlatform = EachIn platforms
+		If platform Then
+			platform.Tick()
+		End If
+	Next
 	If test And Not done Then
 		test.Tick()
 	End If
@@ -600,9 +606,11 @@ Wend
 If test Then
 	test.RemoveSubscriptions()
 End If
-If platform Then
-	platform.Release()
-End If
+For Local platform:TEOSPlatform = EachIn platforms
+	If platform Then
+		platform.Release()
+	End If
+Next
 If initialized Then
 	Local result:EEOSResult = EOSShutdown()
 	If result <> EEOSResult.Success Then

@@ -2,7 +2,8 @@
 
 `EOS.SDK` is a BlitzMax NG binding for the Epic Online Services SDK. It gives
 desktop games access to Epic account login, player identity, social features,
-stats, achievements, leaderboards, lobbies, and peer-to-peer networking.
+stats, achievements, leaderboards, lobbies, peer-to-peer networking, and
+native-platform integration.
 
 The binding is independent of GameNet and can be used directly in any BlitzMax
 application. The Epic SDK itself is not included in this repository.
@@ -244,13 +245,87 @@ details.
 
 The EOS client policy must permit the Sessions action. A newly published
 session can take several seconds to appear in searches. The supplied
-`sessions.bmx` GUI diagnostic publishes a temporary public session, finds and
-inspects it, starts and ends it, and finally removes it. The two-account
-`eos_sessions_test.bmx` app verifies invitation delivery, invite-cache lookup,
-joining, player registration, leaving, and cleanup. When both accounts run in
-one platform instance, EOS may populate the invite cache without emitting the
-invite-received notification; applications should treat the queried cache as
-authoritative.
+`sessions.bmx` GUI diagnostic publishes and updates a temporary public session,
+verifies its capacity and attributes by key, dumps its local state to the EOS
+log, finds and inspects it, starts and ends it, and finally removes it. The
+two-account `eos_sessions_test.bmx` app verifies invitation delivery,
+invite-cache lookup, joining, player registration, leaving, and cleanup using
+an independent EOS platform instance for each account. In Developer Auth
+testing, EOS populated the receiving account's invite cache without emitting
+the invite-received notification, even across independent platform instances.
+Applications should treat `QueryInvites` and the resulting cache as
+authoritative rather than
+depending on notification delivery.
+
+### EOS UI and Social Overlay
+
+`TEOSPlatform.UI()` provides the EOS UI interface. It can show and hide the
+Friends overlay, report its visible and exclusive-input state, set the corner
+used for EOS notifications, pause overlay display, open the player report or
+block dialogs, and acknowledge UI event IDs received from other EOS services.
+Keep the display-settings subscription alive while the game needs the events,
+and suspend gameplay input whenever EOS reports exclusive input.
+
+Epic currently supports the Social Overlay on Windows x64, but not on macOS,
+Linux, Linux ARM64, or Windows ARM64. Games on those targets should provide
+their own social UI using the Friends, Presence, Lobbies, and Sessions APIs.
+The UI interface can still be obtained on an unsupported target, so use the
+result from `EOSSocialOverlaySupportedOnPlatform()` rather than a non-null
+handle as proof that the overlay can open. On Windows, install and redistribute
+Epic's Social Overlay components as required by the EOS SDK. See Epic's
+[Social Overlay integration guide](https://dev.epicgames.com/docs/epic-online-services/accounts-and-social/social-overlay/sdk-integration?lang=en-US)
+for the current platform requirements.
+
+### Steam Integrated Platform
+
+Integrated Platform support lets EOS cooperate with the native service already
+used by a game. The public EOS SDK currently exposes Steam configuration. This
+is separate from EOS Auth and Connect: it allows EOS to observe the local Steam
+user, mirror presence, coordinate invites and sessions, and associate native
+identity state with the corresponding Epic Account and Product User.
+
+For the usual application-managed setup, initialize Steam first, create a
+`TEOSIntegratedPlatformOptionsContainer`, and add
+`TEOSIntegratedPlatformSteamOptions` with
+`LibraryManagedByApplication`. Assign the container to
+`TEOSPlatformOptions.IntegratedPlatformOptions`, create the EOS platform, then
+release the container. The Steam SDK major and minor values must match the
+Steamworks runtime shipped by the game.
+
+```blitzmax
+If Not SteamInit(False) Then
+	RuntimeError "Steam initialization failed"
+End If
+
+Local integratedOptions:TEOSIntegratedPlatformOptionsContainer
+Local result:EEOSResult = ..
+	TEOSIntegratedPlatformOptionsContainer.Create(integratedOptions)
+
+Local steamOptions:TEOSIntegratedPlatformSteamOptions = ..
+	New TEOSIntegratedPlatformSteamOptions
+steamOptions.Flags = ..
+	EEOSIntegratedPlatformManagementFlags.LibraryManagedByApplication
+steamOptions.SteamMajorVersion = 1
+steamOptions.SteamMinorVersion = 65
+result = integratedOptions.AddSteam(steamOptions)
+
+platformOptions.IntegratedPlatformOptions = integratedOptions
+Local platform:TEOSPlatform = TEOSPlatform.Create(platformOptions)
+integratedOptions.Release()
+```
+
+Subscribe through `platform.IntegratedPlatform()` to observe native-user login
+changes. A pre-logout handler may process logout immediately or defer it while
+the game saves progress, leaves a match, or asks the player to confirm. Every
+deferred logout must eventually be completed with
+`FinalizeDeferredUserLogout`. If the game, rather than EOS, detects local-user
+login state, include `ApplicationManagedIdentityLogin` in the configuration and
+call `SetUserLoginStatus` whenever it changes.
+
+`LibraryManagedBySDK` is also supported. It requires the absolute Steam runtime
+path and the exact null-separated interface-version block generated by the
+matching `steam_api.h`; this block is intentionally accepted as `Byte[]` so its
+embedded null characters are preserved.
 
 ## Features and examples
 
@@ -271,6 +346,8 @@ authoritative.
 | Player Data Storage | metadata queries, streamed upload/download, duplicate, delete, cache management | [`storage_streams.bmx`](sdk.mod/examples/storage_streams.bmx) |
 | Sanctions | active-sanction queries, cached copies, player appeals | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
 | Reports | explicitly submitted player behavior reports with optional JSON context | [`moderation.bmx`](sdk.mod/examples/moderation.bmx) and [`sanctions_reports.bmx`](sdk.mod/tests/sanctions_reports.bmx) |
+| EOS UI | Social Overlay visibility, input ownership, placement, pause, report/block dialogs, and event acknowledgement | [`ui.bmx`](sdk.mod/examples/ui.bmx) and [`online_ui.bmx`](sdk.mod/tests/online_ui.bmx) |
+| Integrated Platform | Steam attachment, presence/session integration, native-user login state, and deferred logout | [`integrated_platform_steam.bmx`](sdk.mod/examples/integrated_platform_steam.bmx) and [`integrated_platform.bmx`](sdk.mod/tests/integrated_platform.bmx) |
 
 The interactive [`eos_auth_consent.bmx`](tools/eos_auth_consent.bmx) app remains
 the best first portal and permission test. The smaller
